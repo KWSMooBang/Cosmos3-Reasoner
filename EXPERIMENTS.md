@@ -47,3 +47,9 @@
 - n_invalid 6 (= finish_reason length 6, T=0 반복 루프), n_error 0, lenient 0. prompt mean 3.7k / max 9.9k tok. 1.02 s/sample, 65.6 min, ≈1.2 GPU-h.
 - 스모크 56.39(limit20)·pilot 47.66/36.07(limit50) 은 소표본 노이즈였음 → 소표본 점수로 판단하지 말 것.
 - 문항별 결과: /outputs/Cosmos3-Reasoner/results/t009_SpaceCastBench_CoT_cosmos3_nano_nothink_full/
+
+### t013 순차 평가 (GPU 1, TP=1, cosmos3_nano_nothink T=0) — 출처: L2 [NOTE] (result 파일 인용은 [DONE] 때 갱신)
+| run_id | 설정 | 결과 | 판단 |
+|---|---|---|---|
+| cosmos3_nano_nothink / PhysBench_val / full | 200문항, 이미지 cap 6.9MP | Overall 66.50 (property 54.05 / relationships 74.47 / scene 56.76 / dynamics 72.15), format_gap 0.0 | keep — 형식 패널티 없음 확인 |
+| cosmos3_nano_nothink / VSTIBench / full | 5,736문항, 32 frames native | Overall 53.90 (paper Avg of 5; code9 63.93): CamObjAbs 50.43 / CamDisp 24.83 / CamMovDir 41.29 / ObjObjRelPos 74.65 / CamObjRelDist 78.29 | keep — 정오표 후 라벨이라 논문 수치(VLM-3R 58.8, GPT-4o 38.2)와 비교 불가. 0.70 GPU-h |
