@@ -27,7 +27,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - [x] t009 SpaceCastBench_CoT 전체 평가 (Nano nothink): Overall 31.80 (Qwen3-VL-4B 34.0)
 - [ ] t008 Beyond3D: 포팅 완료(exp/beyond3d), codex High 3건 수정 대기·병합 보류. TP=2/65536 필요 (prompt p50 22.6k). 영상 출처·보정 결정 대기
 - [ ] t010 QuantiPhy 구현 (진행 중) — 실제 단위 정량 물리량 추론, prior 제공
-- [ ] t011 PhysBench 구현 (진행 중) — ICLR 2025, 이미지/비디오 MCQ
+- [x] t011 PhysBench 구현 (main bc8c0b7): 10,002문항, TP=1 이미지 cap 6.9MP (359문항 영향), native TP=2 opt-in
 - [ ] t012 VSTI-Bench 구현 + 3DSRBench 공식 프로토콜 검증 (진행 중)
 - [ ] Qwen3-VL-8B/32B 베이스라인, 기술 보고서 Table 10 재현
 
