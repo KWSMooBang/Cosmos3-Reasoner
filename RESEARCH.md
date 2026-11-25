@@ -23,7 +23,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - [x] t005 SpaceCast-Bench 구현 (main 67817d2, 기본 모드 = CoT: 사람 결정, 공식 메인 실험과 동일) — 3,862 MCQ, 다중 시점 이미지 ≤8장, macro acc. 공식 평가기가 OpenAI 호환 API 지원
 - [ ] Beyond3D — 사람 결정 대기: HD-EPIC 원본 영상 ~115GB 필요(공유 폴더 로그인 가능성), CC-BY-NC, 9,000 MCQ(8 유형, 148 영상),
       비디오를 query 시점까지 잘라 448x448 1fps + 타임스탬프 오버레이로 전처리. 공식 코드는 lmms-eval 포크
-- [ ] t007 ReVSI_64frame 전체 평가 (Nano nothink, GPU 1, TP=1) — t006 이 GPU 1 을 놓으면 시작
+- [x] t007 ReVSI_64frame 전체 평가 (Nano nothink): Overall 51.42 (Qwen3-VL-8B 49.1 / 32B 53.3)
 - [ ] Qwen3-VL-8B/32B 베이스라인, 기술 보고서 Table 10 재현
 
 ## 결정
@@ -41,4 +41,4 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - 2026-11-25: think 평가는 GPU 0,1 (TP=2, 65536) 사용 (사람 지시). t003·t004·t005 main 병합·push 67817d2.
 
 ## GPU 예산
-- 미정. 사용: t003 ≈1.0 GPU-h. t006 ≈3.0 GPU-h. 전체 벤치 실행 전 사람과 정한다.
+- 미정. 사용: t003 ≈1.0 GPU-h. t006 ≈3.0, t007 ≈2.9 GPU-h (누적 ≈6.9). 전체 벤치 실행 전 사람과 정한다.
