@@ -50,7 +50,10 @@ Options (each has an env var; the flag wins):
 
 Fixed flags (same as the reference docker recipe): --async-scheduling --enable-chunked-prefill
   --allowed-local-media-path / --mm-processor-cache-gb 0 --mm-encoder-tp-mode data,
-  env VLLM_USE_FLASHINFER_SAMPLER=0. With TP>1 the script adds --disable-custom-all-reduce
+  env VLLM_USE_FLASHINFER_SAMPLER=0. Also --trust-request-mm-kwargs (not in the reference recipe:
+  vLLM 0.32 otherwise rejects the clients' per-request mm_processor_kwargs), and
+  "video_backend": "opencv" in --media-io-kwargs (vLLM 0.32's qwen3_vl loader cuts videos to 4 frames
+  when fps=-1). With TP>1 the script adds --disable-custom-all-reduce
   (the 4090 has no P2P).
 Extra vllm args go after "--". Parallelism flags (--tensor-parallel-size/-tp, --pipeline-parallel-size/-pp,
   --data-parallel-size/-dp) and flags the script manages are refused there; use the options above.
@@ -176,7 +179,16 @@ serve_main() {
     --allowed-local-media-path /
     --mm-processor-cache-gb 0
     --mm-encoder-tp-mode data
-    --media-io-kwargs "{\"video\": {\"num_frames\": $VIDEO_NUM_FRAMES, \"fps\": $VIDEO_FPS}}"
+    # "video_backend": "opencv" (t003): vLLM 0.32 otherwise routes Qwen3VLVideoProcessor (Cosmos3,
+    # Qwen3-VL) to its "qwen3_vl" loader, which ignores num_frames and computes
+    # int(frames / src_fps * fps) with fps=-1 -> clamped to min_frames=4. A client's 32-frame video
+    # was cut to 4 frames. The generic "opencv" loader treats -1/-1 as "all frames, native fps",
+    # i.e. the reference semantics.
+    --media-io-kwargs "{\"video\": {\"num_frames\": $VIDEO_NUM_FRAMES, \"fps\": $VIDEO_FPS, \"video_backend\": \"opencv\"}}"
+    # vLLM >= ~0.30 rejects per-request mm_processor_kwargs (HTTP 400) without this flag; the
+    # CosmosReason* clients send {"fps", "do_sample_frames": false} with every video (t003).
+    # The reference image (0.23.x) accepted them unconditionally.
+    --trust-request-mm-kwargs
   )
   if [[ -n "$REVISION" ]]; then cmd+=(--revision "$REVISION"); fi
   if [[ -n "$MAX_NUM_SEQS" ]]; then cmd+=(--max-num-seqs "$MAX_NUM_SEQS"); fi

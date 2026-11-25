@@ -91,7 +91,21 @@ honoured. Exit codes: 0 ready, 1 timeout, 2 server died / foreign port owner, 3 
 
 Fixed flags, taken from the reference recipe: `--async-scheduling --enable-chunked-prefill --allowed-local-media-path /
 --mm-processor-cache-gb 0 --mm-encoder-tp-mode data --media-io-kwargs '{"video": {"num_frames": -1, "fps": -1}}'`,
-and env `VLLM_USE_FLASHINFER_SAMPLER=0`. At TP>1 the scripts also add `--disable-custom-all-reduce`, because
+and env `VLLM_USE_FLASHINFER_SAMPLER=0`.
+**Added beyond the reference: `--trust-request-mm-kwargs`.** vLLM 0.32 rejects any request carrying
+`mm_processor_kwargs` with HTTP 400 ("Per-request mm_processor_kwargs are disabled by default ...") unless this
+flag is set; the reference image (0.23.x) accepted them unconditionally. The CosmosReason* clients send
+`{"fps": <f>, "do_sample_frames": false}` with every video, so without the flag every video request fails
+(found in the t003 smoke run: VSI-Bench 20/20 failed). The servers bind 127.0.0.1, so only local clients can
+use it.
+
+**Changed from the reference: `--media-io-kwargs` adds `"video_backend": "opencv"`.** vLLM 0.32 maps
+`Qwen3VLVideoProcessor` (Cosmos3, Qwen3-VL) to its `qwen3_vl` video loader. That loader ignores `num_frames` and
+computes `int(frames / source_fps * fps)` with the configured `fps=-1`, which clamps to `min_frames=4`: in the t003
+smoke run every VSI-Bench video (32 frames prepared by the client) reached the model as **4 frames** (2 temporal
+groups). The generic `opencv` loader reads `num_frames=-1, fps=-1` as "every frame at native fps", which is what the
+reference flag means. Checked offline on a client-encoded 32-frame VSI video: `qwen3_vl` -> 4 frames,
+`opencv` -> 32 frames; and on GPU via the request evidence (t003). At TP>1 the scripts also add `--disable-custom-all-reduce`, because
 the 4090 has no P2P. All of these flags were checked against vLLM 0.32.0's own CLI parser.
 
 Sampling: the checkpoint's `generation_config.json` has `do_sample=true, temperature=0.7, top_p=0.8, top_k=20`.
