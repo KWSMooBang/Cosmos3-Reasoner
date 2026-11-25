@@ -26,3 +26,13 @@
 - TP=1 vs TP=2 nothink: MindCube 동일, VSI 4/20 수치 답 미세 차이 (bf16 TP 수치), 1문항 MRA 변화로 70.31→69.69. TP 간 ±1점 예상.
 - 판단: think = 보조(ablation) 지표. 설정 T=0, max_tokens 8192, truncation rate 함께 보고. 공식 샘플링 discard. headline = nothink.
 - GPU ≈3.0 h (약 1 h 는 L2 감시 누락으로 유휴).
+
+### t007 ReVSI_64frame full (2026-11-25) — 출처: worktree-exp-revsi-full results/summary.csv
+| run_id | task | 설정 | 결과 | 판단 |
+|---|---|---|---|---|
+| cosmos3_nano_nothink / ReVSI_64frame / full | t007 | 6,616문항, T=0, TP=1 GPU1, 16384, video max_pixels 20,971,520 (native 64×640×480), rev 45666784 | Overall 51.42 (공식 파서) / lenient 51.42 | keep — 논문 Qwen3-VL-8B 49.1 보다 +2.3, 32B 53.3 보다 −1.9 |
+- summary.csv 원문: `cosmos3_nano_nothink,spatial,spatial,ReVSI_64frame,full,,,ok,51.42,51.42,2026-11-25T20:44:05,...`
+- 과제별: Obj.Cnt 35.80 / Abs.Dist 50.38 / Obj.Size 69.01 / Room Size 55.47 / Rel.Dist 59.05 / Rel.Dir 42.88 / Route Plan 47.31.
+- 파싱 fallback 0, unparsed 0, 빈 예측 0, API 실패 0, finish_reason 전부 stop. 평균 prompt 9,755 tok. 1.45 s/sample, 2 h 40 min, ≈2.9 GPU-h.
+- 서버 기본 TP=1 video cap(12.58M px)이면 프레임이 512×384 로 줄어듦 → 이 run 은 cap 상향. serving 기본값·PROTOCOL 반영 필요.
+- next: 논문 per-task Qwen3-VL 값 확보 후 비교, Qwen3-VL-8B 같은 설정 재현(베이스라인 검증), collect.py 가 summary.csv 를 덮어쓰는 문제 수정.
