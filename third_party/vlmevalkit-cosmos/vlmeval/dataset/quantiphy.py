@@ -15,7 +15,7 @@ Official code (MIT): github.com/Paulineli/QuantiPhy @ aa8daa7a5736ce3514ed985189
 Keys
   * QuantiPhy       validation split (158 QA, 24 videos): the only split with public GT -> scored.
   * QuantiPhy_test  official test split (3,289 QA, 568 videos): inference only. evaluate() writes the
-    official submission CSV (template columns, ids 1..3289 = parquet row order) and reports the
+    official submission CSV (template columns, ids matched to the template by question identity) and reports the
     parse-failure rate; no score (GT withheld, the challenge portal is closed).
 
 Request (official zero-shot v3 = the paper's main setting):
@@ -493,6 +493,118 @@ def _transcode_480p(src, dst):
     os.replace(tmp, dst)
 
 
+# ---------------------------------------------------------------------------------------------
+# Submission ids (official template) matched by question identity, never by row order
+# ---------------------------------------------------------------------------------------------
+_STABLE = ['video_id', 'video_source', 'inference_type', 'prior', 'fps']  # equal in template and parquet
+_FUZZY_MIN_RATIO = 0.6     # question-text similarity a non-exact match needs
+_FUZZY_MARGIN = 0.02       # best candidate must beat the runner-up by this much (both directions)
+
+
+def _s(x):
+    return '' if _isna(x) else str(x).strip()
+
+
+def _identity(df, prior_col):
+    """Per row: (stable key, full key). fps compared as float."""
+    stable = list(zip(*[df[c].map(_s) if c != 'fps' else pd.to_numeric(df[c]).astype(float)
+                        for c in ['video_id', 'video_source', 'inference_type']],
+                      df[prior_col].map(_s), pd.to_numeric(df['fps']).astype(float)))
+    full = [k + (_s(vt), _s(d), _s(q)) for k, vt, d, q in
+            zip(stable, df['video_type'], df['depth_info'], df['question'])]
+    return stable, full
+
+
+def load_template(root):
+    """Official submission template ($root/competition/), downloaded once, sha256-pinned."""
+    import hashlib
+    import urllib.request
+    path = os.path.join(root, 'competition', 'quantiphy_submission_template.csv')
+
+    def ok():
+        return os.path.exists(path) and hashlib.sha256(open(path, 'rb').read()).hexdigest() == TEMPLATE_SHA256
+    if not ok():
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with urllib.request.urlopen(TEMPLATE_URL, timeout=120) as r:
+            data = r.read()
+        tmp = path + '.tmp'
+        with open(tmp, 'wb') as f:
+            f.write(data)
+        os.replace(tmp, path)
+        if not ok():
+            raise RuntimeError(f'{path}: sha256 != pinned {TEMPLATE_SHA256}')
+    return pd.read_csv(path)
+
+
+def match_template_ids(df, template, prior_col='prior'):
+    """Template id for every row of df (test parquet / TSV), matched by question identity.
+
+    1. exact: (video_id, video_source, inference_type, prior, fps, video_type, depth_info, question) equal;
+    2. otherwise, within the same (video_id, video_source, inference_type, prior, fps) group, the
+       mutually best question-text match (difflib ratio >= 0.6, ahead of the runner-up by >= 0.02 on both
+       sides). The 2026-10 data fixes changed question spelling, depth_info or video_type in 99 rows.
+    Raises ValueError on duplicate identities, ambiguous or missing matches. Returns (ids, modes)."""
+    from difflib import SequenceMatcher
+    t_stable, t_full = _identity(template, 'ground_truth_prior')
+    d_stable, d_full = _identity(df, prior_col)
+    t_ids = template['id'].astype(int).tolist()
+    for name, keys in (('template', t_full), ('data', d_full)):
+        dup = [k for k, c in pd.Series(keys).value_counts().items() if c > 1]
+        if dup:
+            raise ValueError(f'QuantiPhy {name}: {len(dup)} duplicated question identities, e.g. {dup[0]}')
+    by_full = dict(zip(t_full, range(len(t_full))))
+    ids, modes, used = [None] * len(df), [None] * len(df), set()
+    for i, k in enumerate(d_full):
+        j = by_full.get(k)
+        if j is not None:
+            ids[i], modes[i] = t_ids[j], 'exact'
+            used.add(j)
+    rest_d = [i for i in range(len(df)) if ids[i] is None]
+    rest_t = [j for j in range(len(template)) if j not in used]
+    for key in sorted({d_stable[i] for i in rest_d}, key=str):
+        di = [i for i in rest_d if d_stable[i] == key]
+        tj = [j for j in rest_t if t_stable[j] == key]
+        while di:
+            if not tj:
+                raise ValueError(f'QuantiPhy: no template row left for {df.iloc[di[0]][["video_id", "question"]].tolist()}')
+            sim = np.array([[SequenceMatcher(None, d_full[i][-1], t_full[j][-1]).ratio()
+                             + 0.01 * (d_full[i][5] == t_full[j][5]) + 0.01 * (d_full[i][6] == t_full[j][6])
+                             for j in tj] for i in di])
+            progressed = False
+            for a in range(len(di)):
+                b = int(sim[a].argmax())
+                if int(sim[:, b].argmax()) != a or sim[a, b] < _FUZZY_MIN_RATIO:
+                    continue
+                second_row = np.partition(sim[a], -2)[-2] if len(tj) > 1 else -1
+                second_col = np.partition(sim[:, b], -2)[-2] if len(di) > 1 else -1
+                if sim[a, b] - max(second_row, second_col) < _FUZZY_MARGIN:
+                    continue
+                i, j = di[a], tj[b]
+                ids[i], modes[i] = t_ids[j], f'fuzzy:{sim[a, b]:.3f}'
+                di.pop(a)
+                tj.pop(b)
+                progressed = True
+                break
+            if not progressed:
+                raise ValueError(f'QuantiPhy: ambiguous template match for {len(di)} rows of {key[:3]}, e.g. '
+                                 f'{df.iloc[di[0]]["question"]!r}')
+    check_submission_ids(ids, t_ids)
+    return ids, modes
+
+
+def check_submission_ids(ids, template_ids):
+    """Every template id exactly once (export guard)."""
+    s = pd.Series(ids)
+    if s.isna().any():
+        raise ValueError(f'QuantiPhy submission: {int(s.isna().sum())} rows without a template id')
+    dup = s[s.duplicated()].astype(int).unique().tolist()
+    missing = sorted(set(int(x) for x in template_ids) - set(int(x) for x in s))
+    extra = sorted(set(int(x) for x in s) - set(int(x) for x in template_ids))
+    if dup or missing or extra:
+        raise ValueError(f'QuantiPhy submission ids: {len(dup)} duplicated {dup[:5]}, {len(missing)} missing '
+                         f'{missing[:5]}, {len(extra)} unknown {extra[:5]}')
+
+
 class QuantiPhy(VideoBaseDataset):
     # 'Video-VQA' is not in CosmosReason.use_custom_prompt's exclusion list, but VIDEO datasets always
     # use their own build_prompt in inference_video.py; the type only matters for DATASET_TYPE lookups.
@@ -541,12 +653,13 @@ class QuantiPhy(VideoBaseDataset):
         if self.split == 'validation':
             df = pd.read_csv(os.path.join(src, 'validation_dataset.csv'), index_col=0)
             ids = df.index.astype(int)
+            id_match = ['official'] * len(df)
             gt = df['ground_truth_posterior'].astype(float)
             prior = df['ground_truth_prior']
             vidx = _video_index(video_root)
         else:
             df = pd.read_parquet(os.path.join(src, 'test_dataset.parquet'))
-            ids = np.arange(1, len(df) + 1)  # submission template ids = parquet row order
+            ids, id_match = match_template_ids(df, load_template(root))  # by question identity, not row order
             gt = pd.Series([np.nan] * len(df))
             prior = df['prior']
             os.makedirs(video_root, exist_ok=True)
@@ -573,6 +686,7 @@ class QuantiPhy(VideoBaseDataset):
             'answer': gt.values,
             'video': [vidx[v] for v in df['video_id']],
             'n_frames': [nfr[v] for v in df['video_id']],
+            'id_match': id_match,
         })
 
     def video_path(self, video):
@@ -641,8 +755,16 @@ class QuantiPhy(VideoBaseDataset):
         data['prediction'] = [None if _isna(p) else str(p) for p in data['prediction']]
         off = self.official_frame(data)
         if self.split == 'test':
+            # ids come from match_template_ids (TSV build); re-check against the template before export
+            template = load_template(quantiphy_root())
+            check_submission_ids(off['id'].tolist(), template['id'].tolist())
+            fresh, _ = match_template_ids(data, template)  # re-derive from the rows' own content
+            bad = [(int(a), int(b)) for a, b in zip(off['id'], fresh) if int(a) != int(b)]
+            if bad:
+                raise ValueError(f'QuantiPhy submission: {len(bad)} rows carry an id that does not match their '
+                                 f'question in the template (stored, expected) e.g. {bad[:3]}')
             sub_file = get_intermediate_file_path(eval_file, '_quantiphy_submission', 'csv')
-            off[SUBMISSION_COLUMNS].to_csv(sub_file, index=False)
+            off.sort_values('id')[SUBMISSION_COLUMNS].to_csv(sub_file, index=False)
             res = OrderedDict(n=len(off), invalid_percentage=invalid_count(off['parsed_value']) / len(off) * 100)
             print(f'[{self.dataset_name}] GT withheld; submission CSV written to {sub_file}: {dict(res)}')
             return res
