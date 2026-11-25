@@ -12,3 +12,6 @@ benchmarks:
     judge_args: '{"valid_type": "STR"}'
   - key: physics/SeePhys
     judge: gpt-4o-mini-2024-07-18          # SeePhys requires an LLM judge (OPENAI_API_KEY); pinned snapshot
+  - physics/PhysBench                # 10,002 interleaved image/video MCQ, 8 frames/video, official prefix-match scorer; TP=1 image cap 6.9 MP (PROTOCOL.md §6, PhysBench); no judge
+  # - physics/PhysBench_val          # 200-item val split (quick check / answer-format pilot)
+  # - physics/PhysBench_native       # native image resolution; needs TP=2 / max-model-len 65536 (largest prompt 23.8k)

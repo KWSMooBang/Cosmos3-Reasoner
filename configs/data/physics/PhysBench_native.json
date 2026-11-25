@@ -1,0 +1,11 @@
+{
+  "_source": "As PhysBench (same 10,002 items, labels, prompt, frames and scorer).",
+  "_images": "Native resolution (no image cap; the server processor caps each image at 16,777,216 px = 16,384 tokens). Largest prompt 23,816 tokens, 9 prompts > 16,384: needs TP=2 / max-model-len 65536. Opt-in; the default physics/PhysBench uses the TP=1 cap.",
+  "_frames": "As PhysBench: 8 frames per video, pinned in the video message.",
+  "class": "PhysBench",
+  "nframe": 8,
+  "image_max_pixels": null,
+  "video_sampling": {
+    "nframes": 8
+  }
+}

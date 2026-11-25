@@ -243,6 +243,9 @@ def run_one(item: dict[str, Any], model_layer: dict[str, Any], *, model_name: st
             # The headline `score` stays parse_score's Overall (official parser for ReVSI).
             if isinstance(rep["subscores"].get("Overall_lenient"), (int, float)):
                 row["score_lenient"] = rep["subscores"]["Overall_lenient"]
+                # Points the headline loses to answer format only (PhysBench: official startswith rule).
+                if isinstance(rep["overall"], (int, float)):
+                    row["format_gap"] = round(row["score_lenient"] - rep["overall"], 4)
     (bench_out / "score.json").write_text(json.dumps(row, indent=2), "utf-8")
     return row
 
