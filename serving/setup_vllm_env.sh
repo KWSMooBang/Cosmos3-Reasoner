@@ -63,6 +63,10 @@ done
 [[ "$VLLM_PYTHON" =~ ^3\.[0-9]+$ ]] || die "bad --python '$VLLM_PYTHON' (want e.g. 3.12)"
 command -v uv >/dev/null || die "uv not found"
 
+# Symlink check on the raw path, before realpath resolves it: otherwise --force would delete the target.
+if [[ $FORCE == 1 && -L "${VLLM_VENV%/}" ]]; then
+  die "--force refuses to work through a symlink: $VLLM_VENV -> $(readlink "${VLLM_VENV%/}")"
+fi
 VLLM_VENV="$(realpath -m "$VLLM_VENV")"
 PY="$VLLM_VENV/bin/python"
 
@@ -80,7 +84,6 @@ if [[ $MODE != check ]]; then
   if [[ $FORCE == 1 && -e "$VLLM_VENV" ]]; then
     [[ "$VLLM_VENV" == "$SAFE_ROOT"/* ]] || die "--force refuses to delete $VLLM_VENV: not under $SAFE_ROOT"
     [[ -f "$VLLM_VENV/pyvenv.cfg" ]] || die "--force refuses to delete $VLLM_VENV: no pyvenv.cfg, not a venv"
-    [[ -L "$VLLM_VENV" ]] && die "--force refuses to delete a symlink: $VLLM_VENV"
     echo "[setup] removing venv $VLLM_VENV"
     rm -rf -- "$VLLM_VENV"
   fi

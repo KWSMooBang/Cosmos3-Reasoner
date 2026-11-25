@@ -41,7 +41,8 @@ serving/wait_healthy.sh --model nvidia/Cosmos3-Nano --port 8080 --pid $! --timeo
   - both `Cosmos3ForConditionalGeneration` and `Qwen3VLForConditionalGeneration` in the registry;
   - the `vllm serve` entrypoint modules import cleanly.
 - `--force` deletes the venv first, but only if the path resolves under `/workspace/Cosmos3-Reasoner`, has a
-  `pyvenv.cfg`, and is not a symlink.
+  `pyvenv.cfg`, and is not a symlink. The symlink check runs on the raw path, before `realpath`, so a link never
+  leads to deleting its target.
 
 ### Serve scripts
 
@@ -66,10 +67,10 @@ All serve scripts take the same options; flags override env vars. Run any of the
 
 Validation, done before anything starts:
 - **TP and GPUs.** TP must be in the model's allowed set. The GPU mask must be non-empty, contain distinct
-  indices, and have exactly TP entries. An *unset* `CUDA_VISIBLE_DEVICES` means 0..TP-1; a set-but-*empty*
+  indices (normalized to decimal first, so `0,00` is a duplicate and `00,01` is exported as `0,1`), and have exactly TP entries. An *unset* `CUDA_VISIBLE_DEVICES` means 0..TP-1; a set-but-*empty*
   one is an error.
 - **Values.** Ports, lengths, utilisation, fps and frames are checked as numbers before they go into the
-  command or the JSON. `--mm-processor-kwargs` must be a JSON object. An option with no value is an error.
+  command or the JSON. fps and GPU utilisation must be plain decimals (`0.5`, `2`, `2.25`, not `01`, `.5`, `1.`, `1e3`). `--mm-processor-kwargs` must be a JSON object. An option with no value is an error.
 - **Before launch** (skipped by `--dry-run`): the GPU indices must exist (`nvidia-smi -L`), and the port must be
   free (`/proc/net/tcp*`), so an old server can't answer the health check.
 
@@ -81,9 +82,12 @@ Extra vLLM args go after `--`. Parallelism flags (`--tensor-parallel-size`/`-tp`
 ### wait_healthy.sh
 
 `--model ID` is required. Ready means `/v1/models` parses as JSON and `data[].id` contains exactly ID; an empty
-list, another model or a prefix match keeps waiting. With `--pid`, each poll first checks the PID is alive (exit 2
-if it died). On success it also checks via `/proc` that the PID or a child owns the listening socket (exit 2 if
-another process does). Exit codes: 0 ready, 1 timeout, 2 server died / foreign port owner, 3 bad arguments.
+list, another model or a prefix match keeps waiting. With `--pid` (local URL), each poll first checks the PID is
+alive (exit 2 if it died). Ready is reported **only once `/proc` confirms** that the PID or a child owns the
+listening socket. If another process owns it, the script exits 2; if ownership can't be confirmed yet, it keeps
+polling until the timeout. For a remote `--url` (host other than localhost/127.x/::1) the PID/port check is
+skipped, and a log line says so. Sleeps and curl timeouts are capped at the time left, so `--timeout` is
+honoured. Exit codes: 0 ready, 1 timeout, 2 server died / foreign port owner, 3 bad arguments.
 
 Fixed flags, taken from the reference recipe: `--async-scheduling --enable-chunked-prefill --allowed-local-media-path /
 --mm-processor-cache-gb 0 --mm-encoder-tp-mode data --media-io-kwargs '{"video": {"num_frames": -1, "fps": -1}}'`,

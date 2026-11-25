@@ -18,7 +18,8 @@ need_value() {
 
 is_uint() { [[ "$1" =~ ^[0-9]+$ ]]; }
 is_pos_int() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
-is_pos_num() { [[ "$1" =~ ^([0-9]+\.?[0-9]*|\.[0-9]+)$ ]] && awk -v x="$1" 'BEGIN{exit !(x>0)}'; }
+# Positive decimal that is also a valid JSON number literal: no leading zeros (except 0.x), no bare "." or "1.".
+is_pos_num() { [[ "$1" =~ ^(0\.[0-9]+|[1-9][0-9]*(\.[0-9]+)?)$ ]] && awk -v x="$1" 'BEGIN{exit !(x>0)}'; }
 
 serve_usage() {
   cat <<EOF
@@ -58,11 +59,15 @@ EOF
 }
 
 # validate_gpu_mask <mask> <tp>: non-empty, comma-separated distinct indices, exactly TP of them.
+# Sets NORMALIZED_GPUS to the mask with each index as a plain decimal (00 -> 0), which is what gets exported.
+# Must run in the current shell (not $(...)) so die() exits the script.
 validate_gpu_mask() {
   local mask="$1" tp="$2"
   [[ -n "$mask" ]] || die "empty GPU mask (CUDA_VISIBLE_DEVICES is set but empty, or --gpus ''); TP=$tp needs $tp GPU(s)"
-  [[ "$mask" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "bad GPU mask '$mask': want comma-separated indices like 0,1"
-  local -a ids; IFS=, read -r -a ids <<<"$mask"
+  [[ "$mask" =~ ^[0-9]{1,4}(,[0-9]{1,4})*$ ]] || die "bad GPU mask '$mask': want comma-separated indices like 0,1"
+  local -a raw ids=(); IFS=, read -r -a raw <<<"$mask"
+  local r; for r in "${raw[@]}"; do ids+=("$((10#$r))"); done
+  NORMALIZED_GPUS="$(IFS=,; echo "${ids[*]}")"
   local uniq; uniq=$(printf '%s\n' "${ids[@]}" | sort -n | uniq | wc -l)
   [[ "$uniq" -eq "${#ids[@]}" ]] || die "GPU mask '$mask' repeats a GPU"
   [[ "${#ids[@]}" -eq "$tp" ]] || die "GPU mask '$mask' has ${#ids[@]} GPU(s) but TP=$tp; give exactly $tp"
@@ -139,6 +144,7 @@ serve_main() {
   [[ " $TP_ALLOWED " == *" $TP "* ]] || die "TP=$TP not allowed for $MODEL; allowed: $TP_ALLOWED"
   if [[ $gpus_set == 0 ]]; then GPUS="$(seq -s, 0 $((TP - 1)))"; fi
   validate_gpu_mask "$GPUS" "$TP"
+  GPUS="$NORMALIZED_GPUS"
   [[ -n "$MAX_MODEL_LEN" ]] || MAX_MODEL_LEN="$(default_max_model_len "$MODEL" "$TP")"
   is_pos_int "$MAX_MODEL_LEN" || die "--max-model-len must be a positive integer (got '$MAX_MODEL_LEN')"
   is_pos_num "$GPU_MEM_UTIL" && awk -v x="$GPU_MEM_UTIL" 'BEGIN{exit !(x<=1)}' \
