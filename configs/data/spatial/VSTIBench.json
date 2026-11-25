@@ -1,0 +1,9 @@
+{
+  "_source": "HF Journey9ni/vstibench @ 0903eb0 (post-erratum labels, 5,736 questions, 312 ScanNet val videos; no licence on the card, ScanNet terms apply); vlmeval class VSTIBench (vlmeval/dataset/vstibench.py, ported from VITA-Group/VLM-3R thinking-in-space/lmms_eval/tasks/vstibench @ 206afd0). Headline Overall = paper Table 2 Avg (mean of 5 task groups); Overall_code9 = official lmms-eval aggregate. PROTOCOL.md §6, VSTI-Bench.",
+  "_frames": "32 uniform frames (official eval_vlm_3r_vstibench.sh max_frames_num=32). VSTIBench.build_prompt pins nframes=32 in the video message, so model-level sampling attributes are ignored; video_sampling below must equal it (scripts/check_vstibench_frames.py).",
+  "class": "VSTIBench",
+  "nframe": 32,
+  "video_sampling": {
+    "nframes": 32
+  }
+}

@@ -143,7 +143,9 @@ client's qwen-vl-utils `nframes` sampling is also uniform linspace).
 | SiteBenchVideo | spatial | video | 32 | MCQ rule | exact_matching | kit variant `_32frame` (no official value annotated) |
 | DSRBench | spatial | video | 1 fps | MCQ rule | exact_matching | official paper setting (kit comment) |
 | ReVSI_64frame (also _32frame, _16frame, _tiny) | spatial | video | 64 official pre-sampled | NA MRA + MCQ exact match (official parser) | none (ignored) | official `video.zip:64_frame/*.mp4`; §6.1 |
-| MMSIBench_wo_circular, OmniSpatialBench, ViewSpatialBench, MindCubeBench_raw_qa (smoke: _tiny), SiteBenchImage, EmbSpatialBench, ERQA, 3DSRBench, BLINK, MMVP | spatial | image | – | MCQ rule extraction | exact_matching | – |
+| VSTIBench | spatial | video | 32 uniform (pinned in message) | NA MRA + MCQ exact match (official parser); Overall = paper Avg over 5 tasks | none (ignored) | official `eval_vlm_3r_vstibench.sh`; see "VSTI-Bench" below |
+| 3DSRBench_official | spatial | image | – | MCQ rule extraction; Overall = official CircularEval (flip copies separate) | exact_matching | see "3DSRBench" below |
+| MMSIBench_wo_circular, OmniSpatialBench, ViewSpatialBench, MindCubeBench_raw_qa (smoke: _tiny), SiteBenchImage, EmbSpatialBench, ERQA, BLINK, MMVP | spatial | image | – | MCQ rule extraction | exact_matching | – |
 | SparBench | spatial | image | – | MCQ rule + NA | exact_matching (rule path) | – |
 | Spatial457, Omni3DBench | spatial | image | – | dataset-internal rule metric | none used | – |
 | RefSpatial, RoboSpatialHome | spatial | image | – | Point2D in-mask | none used | – |
@@ -324,6 +326,124 @@ Local class `vlmeval/dataset/spacecast.py`; the official helpers are a verbatim 
   `letter_from_word_conflict` when the segment equals another option's text). The score JSON reports
   `n_lenient_parse` and `n_lenient_parse_correct` (how many of those are counted correct). A large
   count means the headline depends on these quirks; report it next to the score.
+
+### VSTI-Bench
+
+Local class `vlmeval/dataset/vstibench.py` (key `VSTIBench`), a port of the official evaluation code
+VITA-Group/VLM-3R `thinking-in-space/lmms_eval/tasks/vstibench/{vstibench.yaml,utils.py}` @ `206afd0e`
+(prompt, question types, parser, MRA, aggregation verbatim). Paper: VLM-3R, arXiv 2505.20279 v5 (CVPR 2026), Table 2.
+Data: HF `Journey9ni/vstibench` @ `0903eb0b` (linked from the official repo and project page), in
+`$LMUData/VSTIBench/` (`test.json` sha256 `7c0780c0…`, `ScanNet.tar.gz` 5.53 GB sha256 `33339aa0…` = LFS oids;
+extracted mp4s 5.2 GB). No licence on the card; the videos are ScanNet val scans (ScanNet Terms of Use).
+
+- **Data.** 5,736 questions on 312 ScanNet val videos (all 640×480, 24 fps, 295–5,422 frames, mean 1,724).
+  This is the **post-erratum** release (2026-07-14: camera-pose bug fixed, 306 questions dropped; the
+  pre-erratum release @ `27ff0a2` had 6,042). The paper's Table 2 was computed on the pre-erratum labels, and the
+  repo README says those numbers are not comparable (the authors plan to re-report). Counts @ `0903eb0b` (checked
+  when the TSV is built):
+
+  | task (paper column) | question types (n) | answer | metric |
+  |---|---|---|---|
+  | Cam-Obj Abs. Dist | `camera_obj_abs_dist` (905) | number (m) | MRA |
+  | Cam. Displace | `camera_displacement` (833) | number (m) | MRA |
+  | Cam. Mov. Dir | `camera_movement_direction` (913; 2/3/4 options) | letter | Acc |
+  | Obj-Obj Rel. Pos | `obj_obj_relative_pos_{lr,nf,ud}` (605/556/484; 2 options) | letter | Acc |
+  | Cam-Obj Rel. Dist | `camera_obj_rel_dist_v{1,2,3}` (91/493/856; 4/3/2 options) | letter | Acc |
+
+- **Frames.** 32 uniform frames (official `eval_vlm_3r_vstibench.sh`: `max_frames_num=32`; `vlm_3r.load_video` =
+  `np.linspace(0, n-1, 32, dtype=int)` over the mp4). The paper states no frame count for the baselines. The
+  questions refer to "frame k of 32" (5,292) or "of N<32" (444), counted over the authors' 32 valid-pose `.sens`
+  frames, so the frames match those indices only approximately, for the authors' own model as well. `build_prompt`
+  sends the mp4 as a video message that **pins `nframes=32`** (as ReVSI does, so model-level sampling attributes are ignored and
+  qwen-vl-utils' default limits apply). qwen-vl-utils samples `torch.linspace(0, n-1, 32).round()`, which differs from the
+  official floor by at most one source frame (1/24 s). Evidence (`scripts/check_vstibench_frames.py`, 2026-11-26, 6 videos ×
+  5 model configs including conflicting model-level nframes=8 / fps=2 / max_frames=4): every request carries 32
+  frames at native 640×480. Sent frame vs official index: offset 0 for 585 frames and +1 for 375, never anything else.
+  `mm_processor_kwargs={do_sample_frames: false, fps: 32/n·24}`. The non-VIDEO_LLM path sends exactly the official
+  indices as images.
+- **Tokens (Cosmos3-Nano processor @ `45666784`).** 640×480 is 20×15 tokens per 2-frame group, i.e. **4,800 video
+  tokens for every question** (all videos have the same size). The full prompt of the longest question of each type is
+  4,997–5,040 tokens. That fits `max-model-len 16384` at TP=1 and leaves ≈11.3k for the reply, the same as 32-frame
+  VSI-Bench (`*_think` 16384 max_tokens is clamped by vLLM).
+- **Prompt** (official, verbatim; yaml `pre_prompt ""` falls back to the utils default):
+  numeric `These are frames of a video.\n<question>\nPlease answer the question using a single word or phrase.`;
+  MCQ `These are frames of a video.\n<question>\nOptions:\nA. …\n…\nAnswer with the option's letter from the given choices directly.`
+  Video before text. `TYPE='MCQ'` so that `CosmosReason*.use_custom_prompt` returns False and this prompt is used.
+- **Metric** (official): parser `pred.split(' ')[0].rstrip('.').strip()`. MCQ: case-insensitive equality with `mc_answer`.
+  Numeric: `float()`, then MRA `mean_θ 1[|p−t|/t ≤ 1−θ]` with θ = 0.50:0.05:0.95 (10 thresholds). Unparsable answers score 0. The same
+  float-threshold quirk as ReVSI is kept for parity (e.g. 2.4 vs 2.0 → 0.7).
+  - **Headline `Overall` = the paper's Avg**: the mean of the 5 task columns, where Obj-Obj Rel. Pos and Cam-Obj Rel. Dist are each
+    the mean of their sub-type means. The paper does not state this; the evidence is that its chance row has Cam-Obj Rel. Dist = 36.1 =
+    mean(1/4, 1/3, 1/2) (the pooled value would be 42.8), and that VLM-3R / Gemini Avg = the mean of the 5 columns.
+  - `Overall_code9` = what the official lmms-eval aggregator returns. It is the unweighted mean of the 9 per-question-type scores and does not
+    merge sub-types, so it differs from the paper's Avg.
+  - Also reported: the 5 task scores and 9 per-type scores. As for ReVSI, `Overall_lenient` is a diagnostic: the kit's rule extractors
+    are used only when the official token is not a valid answer.
+  - No judge (`evaluate()` ignores `--judge`). Per-row results go to `<eval>_vstibench_score.xlsx` and the task table to `<eval>_acc.csv`.
+- **Parity / tests** (`scripts/test_vstibench_scoring.py`, offline): GT → 100 (Overall, code9, lenient); garbage → 0.
+  The official `utils.py`, imported unchanged, agrees with ours on a 33-template synthetic response set over all 5,736
+  questions: 0 per-question mismatches, and its aggregate equals `Overall_code9` (29.750713 both). The paper Avg matches an
+  independent recomputation. 21 hand-made parse cases pass.
+- **Differences from the official run:** the official generation is `max_new_tokens 16`, greedy; ours uses the model
+  layer (greedy, 8192/16384). Our client re-encodes the 32 frames (round vs floor indices, see above) and sends
+  timestamps via `fps`; the official LLaVA-based loader sends bare frames.
+- **Paper reference (Table 2, pre-erratum labels, not directly comparable).** Columns: Avg / Cam-Obj Abs / Cam Disp / Cam Mov Dir /
+  Obj-Obj Rel Pos / Cam-Obj Rel Dist.
+  - VLM-3R (7B): 58.8 / 39.4 / 39.6 / 60.6 / 86.5 / 68.6
+  - GPT-4o: 38.2 / 29.5 / 23.4 / 37.3 / 58.1 / 42.5
+  - Gemini-2.5 Pro: 42.4 / 29.2 / 8.0 / 30.0 / 84.0 / 60.7
+  - LLaVA-NeXT-Video-7B 40.0, LLaVA-OneVision-7B 41.7, InternVL2-8B 43.5, LLaVA-NeXT-Video-72B 44.0
+  - Chance (frequency) 27.4, human 77.0
+  - **No Qwen2.5-VL or Qwen3-VL numbers** are reported for VSTI-Bench (Qwen2.5-VL appears only in the VSI-Bench table).
+
+### 3DSRBench
+
+Paper arXiv 2412.07825 v4; data HF `ccvl/3DSRBench` @ `5c90e422` (CC-BY-4.0). Only the real split (MS-COCO train2017 images, original
+resolution, longest side 640) is released, not the HSSD synthetic split.
+
+- **TSV.** The OpenCompass `3DSRBench.tsv` (md5 `610516a0b4710595545b7613c60524e8`, 262 MB, `$LMUData/3DSRBench.tsv`) has
+  the same rows as the authors' `3dsrbench_v1_vlmevalkit_circular.tsv`, with images de-duplicated.
+  - 11,686 rows = 2,625 base questions (2,100 annotations, 350 each for height / location-above / location-closer after the
+    higher↔lower augmentation) + 2,532 horizontally flipped copies (`<id>-flip`, left/right answers swapped).
+  - That gives 5,157 questions, each repeated once per option ordering (`""`, `-1`, `-2`, `-3`): 2 orderings for the 2-option
+    questions, 4 for the 4-option `*_viewpoint*` ones.
+  - 12 sub-types in 4 categories: height 1, location 3, orientation 3, multi-object 5.
+  - Download: the `opencompass.openxlab.space` TLS certificate has expired (2026-11). The file was fetched from the
+    same Aliyun OSS bucket (`opencompass.oss-cn-shanghai.aliyuncs.com/utils/VLMEval/3DSRBench.tsv`, valid certificate) and
+    verified by md5. `3DSRBench_official` tries both URLs and requires that md5.
+- **Official metric (paper + authors' `compute_3drbench_results_circular.py`).** CircularEval: a question is
+  correct iff every option ordering is answered correctly (the scorer strips a trailing `-N` from `qid` and multiplies the hits).
+  `-flip` copies stay **separate questions** (FlipEval acts as augmentation, not as pairing).
+  Overall and the 4 categories are means over questions. The paper's random row confirms this: height 25.0 = (1/2)²; with flip pairing it would be about 6.25.
+  The paper extracts answers MMBench-style: exact matching, falling back to GPT.
+- **Verdict: the previous setup differed. Fixed.** The upstream key `3DSRBench` (`_3DSRBench.evaluate`) scores all
+  rows and returns a 4-row DataFrame (`vanilla`, `flip_eval`, `circ_eval`, `flip_circ_eval`). Its `circ_eval` row equals
+  the official metric. However, run.py transposes it into a `.df.eval.json`, and `parse_score` (= `run_suite`'s headline)
+  reads that as **0.00 for every prediction set**, including GT (`scripts/test_3dsrbench_official.py`). Even if
+  parsing were fixed, the generic first-row rule would pick `vanilla`, not the paper metric.
+  - New key **`3DSRBench_official`** (`vlmeval/dataset/threedsrbench_official.py`) uses the same TSV, prompt and extraction
+    as upstream. It returns a flat dict: `Overall` = official CircularEval, plus height / location / orientation /
+    multi_object, the 12 sub-types, `n_questions`, `evaluation_scope` (`full` iff 11,686 rows / 5,157 questions), and the
+    diagnostics `vanilla`, `flip_eval`, `flip_circ_eval`, `upstream_circ_eval`. The spatial suite now runs this key.
+    The upstream class is untouched, and the key `3DSRBench` stays available.
+- **Prompt / images.** The authors' README runs `run.py --data 3DSRBenchv1`, i.e. VLMEvalKit's default
+  `ImageMCQDataset.build_prompt` (`Question: …\nOptions:\nA. …\nPlease select the correct answer from the options above. \n`).
+  `CosmosReason*` uses exactly this for MCQ datasets (`use_custom_prompt` → False). Images are sent at native resolution (`img_size=-1`).
+- **Parity** (`scripts/test_3dsrbench_official.py`, offline, ~3 min). The authors' scorer runs verbatim on our `_result.xlsx`,
+  laid out like its `_openai_result.xlsx`. Over 8 prediction sets (GT, garbage, all-A, random ×2, GT with 30 % of rotated / flipped
+  copies wrong, mixed text answers), ours matches overall, the 4 categories and 12 sub-types (0 mismatches at the
+  script's 0.1 rounding), and equals upstream `circ_eval` exactly. Examples: random 22.1 / 21.3 (paper random 20.9); all-A 0.0.
+- **Difference from the paper:** `--judge exact_matching` (no GPT fallback), so answers the rule extractor cannot parse
+  count as wrong. The paper falls back to GPT-4 extraction.
+- **Paper reference (v4 Table, real split, CircularEval).** Columns: Overall / Height / Location / Orientation / Multi-object.
+  - Qwen2.5-VL-7B: 48.4 / 44.1 / 62.7 / 40.6 / 40.5
+  - InternVL2.5-8B: 50.9 / 45.9 / 68.1 / 38.7 / 43.3
+  - GPT-4o: 44.2 / 53.2 / 59.6 / 21.6 / 39.0
+  - Gemini-2.0-Flash: 49.8 / 49.7 / 68.9 / 32.2 / 41.5
+  - QwenVLMax: 52.0 / 45.1 / 70.7 / 37.7 / 44.8
+  - SpatialReasoner: 60.3
+  - Human: 95.7
+  - **No official Qwen3-VL number**: the Qwen3-VL tech report and model cards do not list 3DSRBench.
 
 ## 7. Reproducibility caveats
 

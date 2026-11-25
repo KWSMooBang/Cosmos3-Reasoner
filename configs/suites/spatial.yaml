@@ -16,6 +16,7 @@ benchmarks:
   - spatial/SiteBenchVideo
   - spatial/DSRBench
   - spatial/ReVSI_64frame            # official pre-sampled 64-frame videos (PROTOCOL.md §6)
+  - spatial/VSTIBench                # VLM-3R VSTI-Bench, 32 frames; Overall = paper Avg over 5 tasks (PROTOCOL.md §6)
   # --- image / multi-view MCQ ---
   - spatial/MMSIBench_wo_circular
   - spatial/OmniSpatialBench
@@ -24,7 +25,7 @@ benchmarks:
   - spatial/SiteBenchImage
   - spatial/EmbSpatialBench
   - spatial/ERQA
-  - spatial/3DSRBench
+  - spatial/3DSRBench_official     # official CircularEval headline; upstream key 3DSRBench reports 0.00 via parse_score (PROTOCOL.md §6)
   - spatial/BLINK
   - spatial/MMVP
   - spatial/SpaceCastBench_CoT     # official cot mode = official main experiment (default); macro acc over 16 task types

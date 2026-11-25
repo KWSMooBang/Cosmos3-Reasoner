@@ -36,3 +36,16 @@ Then update this table.
    EvolvingLMMs-Lab/lmms-eval `lmms_eval/tasks/revsi/` @ `9134731f4f617e62ee80bcae9d0d5d9695ea55ef`,
    eamonn-zh/torchmetrics_ext `metrics/vqa/revsi.py` @ `3c18d782f51cbe31558ea7b53cbece5561b1721e`
    (referenced by 3dlg-hcvc/revsi @ `b26df855`). Data: HF `3dlg-hcvc/ReVSI` @ `345a811`. See PROTOCOL.md §6.1.
+4. `vlmeval/dataset/vstibench.py` (new), `vlmeval/dataset/__init__.py` (one import + `VIDEO_DATASET += [VSTIBench]`):
+   VSTI-Bench (VLM-3R) dataset, key `VSTIBench`, ported from the official evaluation code
+   VITA-Group/VLM-3R `thinking-in-space/lmms_eval/tasks/vstibench/{vstibench.yaml,utils.py}` @
+   `206afd0ece4369457fb3c5c7781a6735fd2bbe8c` (prompt, question types, parser, MRA and aggregation verbatim;
+   frames from `scripts/VSTI-Bench/eval_vlm_3r_vstibench.sh` + `lmms_eval/models/vlm_3r.py`). Code licence:
+   Apache-2.0 (VLM-3R `LICENSE` and `thinking-in-space/LICENSE`).
+   Data: HF `Journey9ni/vstibench` @ `0903eb0b0c9d03da730d43503c48302a1f3b412d` (no licence on the card; videos are
+   ScanNet val, ScanNet Terms of Use apply). See PROTOCOL.md §6, VSTI-Bench.
+5. `vlmeval/dataset/threedsrbench_official.py` (new), `vlmeval/dataset/__init__.py` (one import +
+   `IMAGE_DATASET += [ThreeDSRBenchOfficial]`): key `3DSRBench_official` = upstream `_3DSRBench` (same TSV, prompt,
+   answer extraction) with the official headline metric of the authors' scorer `compute_3drbench_results_circular.py`
+   (HF `ccvl/3DSRBench` @ `5c90e422b68d0484d50a3ff06b3096ea7d288026`, CC-BY-4.0 per the card): CircularEval,
+   flipped images as separate questions. The upstream class is untouched. See PROTOCOL.md §6, 3DSRBench.

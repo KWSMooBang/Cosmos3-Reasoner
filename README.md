@@ -59,6 +59,9 @@ python scripts/check_video_sampling.py                                 # prove f
 python scripts/check_revsi_frames.py                                   # ReVSI: official frames reach the request (needs data)
 python scripts/test_revsi_scoring.py                                   # ReVSI scorer tests (offline, needs parquet)
 python scripts/check_spacecast_parity.py                               # SpaceCast-Bench vs official evaluator (offline, ~6 min; needs the built cache)
+python scripts/check_vstibench_frames.py                              # VSTI-Bench: 32 frames reach the request (needs data)
+python scripts/test_vstibench_scoring.py --official-dir <VLM-3R>/thinking-in-space/lmms_eval/tasks/vstibench   # VSTI-Bench vs official scorer
+python scripts/test_3dsrbench_official.py --official-script <compute_3drbench_results_circular.py>             # 3DSRBench_official vs authors' scorer (~3 min)
 python scripts/run_suite.py --suite configs/suites/smoke.yaml --dry-run # print merged configs, no server
 python scripts/run_suite.py --suite configs/suites/smoke.yaml           # cosmos3_nano_nothink by default
 python scripts/run_suite.py --suite configs/suites/spatial.yaml --model cosmos3_nano_think
@@ -68,6 +71,10 @@ python scripts/run_suite.py --suite configs/suites/physics.yaml --model qwen3vl_
 SpaceCast-Bench runs in the official **cot** mode by default (`spatial/SpaceCastBench_CoT`, the
 official main experiment); the direct mode `spatial/SpaceCastBench` is a commented opt-in line in
 `spatial.yaml` (PROTOCOL.md §6, SpaceCast-Bench).
+
+The spatial suite runs `spatial/VSTIBench` (VLM-3R VSTI-Bench, 32 frames, headline = paper Avg) and
+`spatial/3DSRBench_official` (official CircularEval) instead of the upstream `3DSRBench` key, whose 4-setting
+DataFrame parse_score reads as 0.00 (PROTOCOL.md §6, VSTI-Bench / 3DSRBench).
 
 Per bench, `run_suite.py` composes (same rule as `cosmos_eval/run_all.py`)
 

@@ -1,4 +1,4 @@
 {
-  "_source": "OpenCompass TSV; vlmeval class _3DSRBench",
+  "_source": "OpenCompass TSV; vlmeval class _3DSRBench (upstream). NOT in the spatial suite: evaluate() returns a 4-setting DataFrame (vanilla/flip_eval/circ_eval/flip_circ_eval) whose run.py df.eval.json parse_score reads as 0.00; use spatial/3DSRBench_official (PROTOCOL.md §6, 3DSRBench).",
   "class": "_3DSRBench"
 }
