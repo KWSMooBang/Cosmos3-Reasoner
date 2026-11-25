@@ -70,14 +70,26 @@ SHA256 = {
     'test_answer.json': '229ddf9be156dbb93f23af5fc714addb144a781638dff89a571034c907f12446',
     'val_answer.json': 'b960d24d8f573ddc1a8a4472e0684065b4f28b90a96c7f34947b5c8c45d15940',
 }
-BUILD_VERSION = 4  # 2: video_frames / video_nframes; 3: val taxonomy; 4: media manifest digest
+BUILD_VERSION = 5  # 2: video_frames / video_nframes; 3: val taxonomy; 4: media manifest; 5: images column (cap)
 
 # official eval/eval_utils/task_evaluator.py
 TEST_FRAME = 8
 END_PROMPT = ("\nAnswer with the option's letter from the given choices directly. "
               "You can only answer one letter from A, B, C, or D.")
 
-SUBSETS = {'PhysBench': ('all', 'test_answer.json', 10002), 'PhysBench_val': ('val', 'val_answer.json', 200)}
+# Per-image pixel cap for TP=1 / max-model-len 16384 (L1 decision 2026-11-26): the largest cap whose
+# biggest prompt stays <= ~13.5k tokens. 6,912,000 px = 6,750 tokens of 32x32 px; largest prompt 13,476
+# tokens incl. chat template. Images whose native token count (Nano processor limits) is above the cap are
+# sent as a resized copy (359 items / 218 images); every other image is the original file.
+IMAGE_MAX_PIXELS_TP1 = 6_912_000
+# key: (split, label file, expected rows, image max_pixels or None = native)
+SUBSETS = {
+    'PhysBench': ('all', 'test_answer.json', 10002, IMAGE_MAX_PIXELS_TP1),
+    'PhysBench_val': ('val', 'val_answer.json', 200, IMAGE_MAX_PIXELS_TP1),
+    'PhysBench_native': ('all', 'test_answer.json', 10002, None),  # TP=2 / 65536 opt-in
+}
+# Cosmos3-Nano @ 45666784 preprocessor_config.json (image): shortest_edge / longest_edge in px; 32x32 px per token
+SERVER_MIN_PIXELS, SERVER_MAX_PIXELS, PX_PER_TOKEN = 65536, 16777216, 32
 
 TASK_ORDER = ['property', 'relationships', 'scene', 'dynamics']
 SUB_ORDER = {
@@ -315,6 +327,67 @@ def ensure_media(root, files):
     return {f: man['files'][f] for f in files}
 
 
+def image_tokens(h, w, max_pixels=SERVER_MAX_PIXELS):
+    """(tokens, (h, w)) after the processor's smart_resize (factor 32) under max_pixels."""
+    from qwen_vl_utils.vision_process import smart_resize
+    rh, rw = smart_resize(h, w, factor=PX_PER_TOKEN, min_pixels=SERVER_MIN_PIXELS, max_pixels=max_pixels)
+    return rh * rw // (PX_PER_TOKEN * PX_PER_TOKEN), (rh, rw)
+
+
+def ensure_capped_images(root, images, media, max_pixels):
+    """{image: path relative to root} to send under a per-image pixel cap.
+
+    An image whose native token count (processor limits) is <= max_pixels / 1024 is sent unchanged
+    (`image/<name>`). Larger ones are resized once to the processor's own smart_resize(factor 32,
+    max_pixels) size (multiples of 32, so the server does not resize again; tokens = h*w/1024), with
+    PIL BICUBIC, keeping format (JPEG quality 95 / PNG), EXIF and ICC profile, and stored as
+    `image_maxpx<max_pixels>/<name>`. <root>/image_maxpx<max_pixels>.json records source sha256,
+    native size, output size and sha256; a copy is rebuilt when its source changed or the copy differs."""
+    from PIL import Image
+    sub = f'image_maxpx{max_pixels}'
+    man_path = os.path.join(root, f'{sub}.json')
+    man = {}
+    if os.path.exists(man_path):
+        with open(man_path) as f:
+            man = json.load(f)
+    out, dirty = {}, False
+    os.makedirs(os.path.join(root, sub), exist_ok=True)
+    for name in images:
+        src_sha = media[name]['sha256']
+        e = man.get(name)
+        if e is None or e['src_sha256'] != src_sha:
+            with Image.open(media_path(root, name)) as im:
+                e = dict(src_sha256=src_sha, h=im.height, w=im.width)
+            man[name] = e
+            dirty = True
+        if image_tokens(e['h'], e['w'])[0] * PX_PER_TOKEN * PX_PER_TOKEN <= max_pixels:
+            out[name] = os.path.join('image', name)
+            continue
+        dst = os.path.join(root, sub, name)
+        st = os.stat(dst) if os.path.exists(dst) else None
+        if st is None or e.get('size') != st.st_size or e.get('mtime_ns') != st.st_mtime_ns:
+            _, (rh, rw) = image_tokens(e['h'], e['w'], max_pixels)
+            with Image.open(media_path(root, name)) as im:
+                fmt = im.format
+                kw = {k: im.info[k] for k in ('exif', 'icc_profile') if im.info.get(k)}
+                small = im.resize((rw, rh), Image.BICUBIC)
+            if fmt == 'JPEG':
+                kw.update(quality=95)
+            tmp = f'{dst}.{os.getpid()}.tmp'
+            small.save(tmp, format=fmt, **kw)
+            os.replace(tmp, dst)
+            st = os.stat(dst)
+            e.update(out_h=rh, out_w=rw, size=st.st_size, mtime_ns=st.st_mtime_ns, sha256=_sha256(dst))
+            dirty = True
+        out[name] = os.path.join(sub, name)
+    if dirty:
+        tmp = f'{man_path}.{os.getpid()}.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(man, f)
+        os.replace(tmp, man_path)
+    return out, man
+
+
 def load_items(root):
     """test.json joined with the official labels (test_answer.json covers all 10,002 idx)."""
     with open(_ensure_file(root, 'test.json'), encoding='utf-8') as f:
@@ -343,14 +416,17 @@ class PhysBench(VideoBaseDataset):
     TYPE = 'MCQ'
     MODALITY = 'VIDEO'
 
-    def __init__(self, dataset='PhysBench', pack=False, nframe=0, fps=-1, **kwargs):
+    def __init__(self, dataset='PhysBench', pack=False, nframe=0, fps=-1, image_max_pixels='key', **kwargs):
         if dataset not in SUBSETS:
             raise ValueError(f'Unknown PhysBench key {dataset}; choose from {list(SUBSETS)}')
+        if image_max_pixels != 'key' and image_max_pixels != SUBSETS[dataset][3]:
+            raise ValueError(f'{dataset}: image_max_pixels is fixed by the key ({SUBSETS[dataset][3]}), got '
+                             f'{image_max_pixels}; use PhysBench_native for native resolution')
         if (nframe or 0) > 0 and int(nframe) != TEST_FRAME:
             raise ValueError(f'{dataset}: official frame budget is {TEST_FRAME}, got nframe={nframe}')
         if fps is not None and fps > 0:
             raise ValueError(f'{dataset}: fps sampling is not supported (official {TEST_FRAME} frames)')
-        self.split, self.label_file, self.expected = SUBSETS[dataset]
+        self.split, self.label_file, self.expected, self.image_max_pixels = SUBSETS[dataset]
         super().__init__(dataset=dataset, pack=pack, nframe=TEST_FRAME, fps=-1)
 
     @classmethod
@@ -373,6 +449,15 @@ class PhysBench(VideoBaseDataset):
                 n = media[r['video']]['frames'] if r['video'] != 'none' else None
                 r['video_frames'] = n if n is not None else 0
                 r['video_nframes'] = frame_budget(n) if n is not None else 0
+            images = [f for f in files if not f.lower().endswith('.mp4')]
+            if self.image_max_pixels is None:
+                send, cap_man = {f: os.path.join('image', f) for f in images}, {}
+            else:
+                send, cap_man = ensure_capped_images(root, images, media, self.image_max_pixels)
+            for r in rows:
+                imgs = [send[f] for f in json.loads(r['file_name']) if not f.lower().endswith('.mp4')]
+                r['images'] = json.dumps(imgs)
+                r['n_images_capped'] = sum(not p.startswith('image' + os.sep) for p in imgs)
             if self.split != 'all':
                 # val labels: the official val_answer.json has the same ids and answers as the
                 # test_answer.json rows, but 14 rows carry an older task/ability taxonomy there. The
@@ -391,6 +476,10 @@ class PhysBench(VideoBaseDataset):
                                  labels_sha256=SHA256[self.label_file],
                                  media_digest=hashlib.sha256(json.dumps(
                                      [[f, media[f]['sha256'], media[f]['frames']] for f in files]).encode()
+                                 ).hexdigest(),
+                                 image_max_pixels=self.image_max_pixels,
+                                 cap_digest=hashlib.sha256(json.dumps(
+                                     [[f, send[f], cap_man.get(f, {}).get('sha256')] for f in images]).encode()
                                  ).hexdigest())
             current = None
             if os.path.exists(manifest) and os.path.exists(tsv):
@@ -437,6 +526,7 @@ class PhysBench(VideoBaseDataset):
             assert line < len(self)
             line = self.data.iloc[line]
         files = json.loads(line['file_name'])
+        images = iter(json.loads(line['images']))  # paths to send (capped copies where needed)
         prompt = line['question'] + END_PROMPT
         message, k = [], 0
         for part in PLACEHOLDER_RE.split(prompt):
@@ -445,7 +535,9 @@ class PhysBench(VideoBaseDataset):
                 k += 1
                 assert f.lower().endswith('.mp4') == (part == '<video>'), (line['index'], f, part)
                 if part == '<image>':
-                    message.append(dict(type='image', value=media_path(self.data_root, f)))
+                    sent = next(images)
+                    assert os.path.basename(sent) == f, (line['index'], f, sent)
+                    message.append(dict(type='image', value=os.path.join(self.data_root, sent)))
                 elif video_llm:
                     # nframes pinned to the official budget (overrides model-level sampling); < 8 only
                     # for the 19 clips shorter than 8 frames (frame_budget). One video per item at most.
