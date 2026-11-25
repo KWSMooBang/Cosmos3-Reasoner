@@ -18,6 +18,10 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - [x] t001 vlmevalkit-cosmos subtree + 평가 클라이언트 venv + configs/scripts/docs 뼈대 (main cf328c1)
 - [ ] t002 serving/ native vLLM 스크립트 — 완료 보고 받음, codex 리뷰 수정 중
 - [ ] t003 스모크 테스트 (Nano, TP=2) — docker 가 없어 보류. native vLLM 경로 승인 시 진행
+- [ ] t004 ReVSI 구현 (진행 중) — HF 3dlg-hcvc/ReVSI 4.9GB, 64 frames, MRA+acc. 논문 Qwen3-VL-8B 49.1
+- [ ] t005 SpaceCast-Bench 구현 (진행 중) — 3,862 MCQ, 다중 시점 이미지 ≤8장, macro acc. 공식 평가기가 OpenAI 호환 API 지원
+- [ ] Beyond3D — 사람 결정 대기: HD-EPIC 원본 영상 ~115GB 필요(공유 폴더 로그인 가능성), CC-BY-NC, 9,000 MCQ(8 유형, 148 영상),
+      비디오를 query 시점까지 잘라 448x448 1fps + 타임스탬프 오버레이로 전처리. 공식 코드는 lmms-eval 포크
 - [ ] Qwen3-VL-8B/32B 베이스라인, 기술 보고서 Table 10 재현
 
 ## 결정
