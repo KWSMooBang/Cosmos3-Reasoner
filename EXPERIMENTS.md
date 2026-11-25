@@ -37,3 +37,13 @@
 - 파싱 fallback 0, unparsed 0, 빈 예측 0, API 실패 0, finish_reason 전부 stop. 평균 prompt 9,755 tok. 1.45 s/sample, 2 h 40 min, ≈2.9 GPU-h.
 - 서버 기본 TP=1 video cap(12.58M px)이면 프레임이 512×384 로 줄어듦 → 이 run 은 cap 상향. serving 기본값·PROTOCOL 반영 필요.
 - next: 논문 per-task Qwen3-VL 값 확보 후 비교, Qwen3-VL-8B 같은 설정 재현(베이스라인 검증), collect.py 가 summary.csv 를 덮어쓰는 문제 수정.
+
+### t009 SpaceCastBench_CoT full (2026-11-26) — 출처: worktree-exp-spacecast-full results/summary.csv
+| run_id | task | 설정 | 결과 | 판단 |
+|---|---|---|---|---|
+| cosmos3_nano_nothink / SpaceCastBench_CoT / full | t009 | 3,862문항, cot, T=0, TP=1 GPU1, 16384, rev 45666784 | Overall 31.80 (macro 16 types), micro 30.86 | keep — 논문 Qwen3-VL-4B 34.0 보다 −2.2, Qwen3.5-27B 39.3 보다 −7.5 |
+- summary.csv 원문: `cosmos3_nano_nothink,spatial,spatial,SpaceCastBench_CoT,full,,,ok,31.80,,2026-11-26T01:17:09`
+- L1 macro 38.34 / L2 30.31 / L3 22.18. 최저: Rotate Object Dir(L3) 12.11, Object Direction 15.94. 최고: Occlusion 66.06.
+- n_invalid 6 (= finish_reason length 6, T=0 반복 루프), n_error 0, lenient 0. prompt mean 3.7k / max 9.9k tok. 1.02 s/sample, 65.6 min, ≈1.2 GPU-h.
+- 스모크 56.39(limit20)·pilot 47.66/36.07(limit50) 은 소표본 노이즈였음 → 소표본 점수로 판단하지 말 것.
+- 문항별 결과: /outputs/Cosmos3-Reasoner/results/t009_SpaceCastBench_CoT_cosmos3_nano_nothink_full/
