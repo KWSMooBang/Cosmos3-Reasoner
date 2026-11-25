@@ -108,6 +108,17 @@ remains available as `*_think_nvprompt` for comparison.
   values are set to the same numbers for consistency). Unset resolution keys fall back to
   qwen-vl-utils defaults: per-frame max `768 x 32^2 = 786,432` px, min `128 x 32^2` px,
   `total_pixels = 128000 x 32^2 x 0.9`.
+- Caveat: `CosmosReason._get_video_processing_kwargs` drops **all** model-level sampling values
+  as soon as a video message carries **any** sampling key (even only `max_pixels`). Checked
+  (`scripts/check_video_sampling.py`, AST of each class's `build_prompt`): VsiBench, STIBench,
+  SiteBenchVideo and DSRBench build `{type: 'video', value: path}` with no sampling keys, so our
+  values apply. **MMSIVideoBench never sends a video message**: it subsamples the provided
+  per-clip frame lists with the *dataset's* `nframe` (one global linspace over all segments)
+  and sends the frames as images, so its frame count is the dataset-side `nframe` and it has no
+  `video_sampling` block. The same script also proves the counts dynamically (synthetic
+  40 s / 30 fps video -> client preprocessing -> frames in the request): VSI-Bench(-Debiased) 32,
+  STI-Bench 30, SiteBenchVideo 32, DSRBench 40 (1 fps), MMSIVideoBench 64 of 300.
+  `run_suite.py` refuses configs that set both `nframes` and `fps` (or dataset `nframe` and `fps`).
 
 ## 6. Per-benchmark settings
 
@@ -118,7 +129,7 @@ client's qwen-vl-utils `nframes` sampling is also uniform linspace).
 |---|---|---|---|---|---|---|
 | VSI-Bench | spatial, smoke | video | 32 uniform | MCQ rule + NA (MRA) | exact_matching | task spec; VSI-Bench paper; kit variant `VSI-Bench_32frame` |
 | VSI-Bench-Debiased | spatial | video | 32 uniform | as VSI-Bench | exact_matching | same as VSI-Bench |
-| MMSIVideoBench | spatial | video | 64 | MCQ rule | exact_matching | kit variant `_64frame`; paper SC policy = 300 frames (TODO) |
+| MMSIVideoBench | spatial | video (sent as image frames) | 64 (dataset-side) | MCQ rule | exact_matching | kit variant `_64frame`; paper SC policy = 300 frames (TODO) |
 | STI-Bench | spatial | video | 30 | MCQ rule | exact_matching | official paper setting (kit comment) |
 | SiteBenchVideo | spatial | video | 32 | MCQ rule | exact_matching | kit variant `_32frame` (no official value annotated) |
 | DSRBench | spatial | video | 1 fps | MCQ rule | exact_matching | official paper setting (kit comment) |

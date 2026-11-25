@@ -142,6 +142,12 @@ def build_config(model_layer: dict[str, Any], item: dict[str, Any], *, render: b
     for k, v in video_sampling.items():
         if k not in per_bench:
             model_conf[k] = v
+    # qwen-vl-utils (client) and VideoBaseDataset (dataset) each accept only one of the two.
+    if model_conf.get("nframes") is not None and model_conf.get("fps") is not None:
+        sys.exit(f"Error: {item['key']}: model config sets both nframes={model_conf['nframes']} and "
+                 f"fps={model_conf['fps']}; set exactly one (data video_sampling / model per-bench override)")
+    if (dataset_conf.get("nframe") or 0) > 0 and (dataset_conf.get("fps") or -1) > 0:
+        sys.exit(f"Error: {item['key']}: dataset config sets both nframe and fps; set exactly one")
     if render:
         model_conf = run_all._render_env(model_conf)
         dataset_conf = run_all._render_env(dataset_conf)

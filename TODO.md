@@ -41,6 +41,9 @@ Implemented but not in a suite:
    `nframes/fps/max_pixels/total_pixels`. Dataset-side `nframe` is ignored on that path. Data configs
    therefore carry a `video_sampling` block that `run_suite.py` merges into `model_conf`
    (`{class} | defaults | data.video_sampling | model.benchmarks[bench]`), an extension of run_all's compose.
+   Exception: MMSIVideoBench sends dataset-subsampled frames as images (dataset `nframe` decides;
+   no `video_sampling`). A sampling key inside a video message would override all model-level
+   values; none of our video benches sets one (`scripts/check_video_sampling.py`).
 4. **Video variant keys** (`VSI-Bench_32frame`, …) are in `supported_video_datasets`, not in
    `SUPPORTED_DATASETS`; suites use base keys (`VSI-Bench`) with explicit frame settings instead.
 5. **No sample-limit option** in VLMEvalKit `run.py` → `scripts/vlmeval_run.py` wrapper (README "Sample limit").
