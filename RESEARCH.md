@@ -47,5 +47,8 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 
 - 2026-11-26: 데이터는 /data0 바로 아래가 아니라 /data0/woosung/datasets/Cosmos3-Reasoner/ 아래에 둔다 (사람 지시). LMUData·hd-epic 이동 완료.
 
+- 2026-11-26: t010–t012 세팅이 끝나면, GPU 1장(TP=1, 16384)에 들어가는 새 벤치들을 GPU 1 에서 순차 전체 평가 (사람 지시).
+  대상 후보: QuantiPhy, PhysBench, VSTIBench, 3DSRBench(검증 결과 반영). ReVSI·SpaceCast 는 완료, Beyond3D 는 TP=2 필요 + 데이터 대기라 제외.
+
 ## GPU 예산
 - 미정. 사용: t003 ≈1.0 GPU-h. t006 ≈3.0, t007 ≈2.9, t009 ≈1.2 GPU-h (누적 ≈8.1). 전체 벤치 실행 전 사람과 정한다.
