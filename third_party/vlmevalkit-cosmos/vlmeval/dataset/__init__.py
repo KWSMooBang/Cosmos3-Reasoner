@@ -163,6 +163,7 @@ from .siuo_mcq import SIUOMCQDataset
 from .slidevqa import SlideVQA
 from .sop_action_recognition import SOPActionRecognition
 from .sop_temporal_localization import SOPTemporalLocalization
+from .spacecast import SpaceCastBench
 from .spar_bench import SPARBench, SPARBenchTiny
 from .sparbench import SparBench
 from .spatial457 import Spatial457
@@ -362,6 +363,9 @@ IMAGE_DATASET += [
     SparBench, SpatialVizBench, StareBench, OmniSpatialBench, ERQABench, RoboSpatialBench, RefSpatialBench,  # noqa: E501
     SPBench, ERIQBench, DA2K
 ]
+
+# local addition (Cosmos3-Reasoner): SpaceCast-Bench
+IMAGE_DATASET += [SpaceCastBench]
 
 VIDEO_DATASET = [
     MMBenchVideo, VideoMME, MVBench, MVBench_MP4, PerceptionTestLocal, MVTamperBench,
