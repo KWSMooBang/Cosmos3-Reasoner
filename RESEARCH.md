@@ -29,7 +29,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - [x] t010 QuantiPhy 구현 (main c958dda): val 158문항만 채점 가능 (test GT 비공개), 공식 parser ^2 버그 유지 + lenient
 - [x] t011 PhysBench 구현 (main bc8c0b7): 10,002문항, TP=1 이미지 cap 6.9MP (359문항 영향), native TP=2 opt-in
 - [x] t012 VSTI-Bench 구현 + 3DSRBench_official (upstream 키는 헤드라인 0.00 버그) — main 병합
-- [ ] t013 GPU 1 순차 전체 평가 (Nano nothink): PhysBench_val → VSTIBench → 3DSRBench_official → PhysBench (→ QuantiPhy) — 진행 중
+- [x] t013 GPU 1 순차 전체 평가 (Nano nothink): PhysBench_val 66.50, VSTIBench 53.90, 3DSRBench_official 53.42, PhysBench 53.27, QuantiPhy(val) 41.15
 - [ ] Qwen3-VL-8B/32B 베이스라인, 기술 보고서 Table 10 재현
 
 ## 결정
@@ -54,4 +54,4 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - 2026-11-26: t006·t007·t009 main 병합 (사람 승인, 로컬). GPU 1 순차 평가 예산 4–10 GPU-h 승인.
 
 ## GPU 예산
-- 미정. 사용: t003 ≈1.0 GPU-h. t006 ≈3.0, t007 ≈2.9, t009 ≈1.2 GPU-h (누적 ≈8.1). 전체 벤치 실행 전 사람과 정한다.
+- 미정. 사용: t003 ≈1.0 GPU-h. t006 ≈3.0, t007 ≈2.9, t009 ≈1.2, t013 ≈2.8 GPU-h (누적 ≈10.9). 전체 벤치 실행 전 사람과 정한다.
