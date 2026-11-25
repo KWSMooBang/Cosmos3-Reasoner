@@ -449,7 +449,9 @@ class ReVSI(VideoBaseDataset):
                 raise RuntimeError(f'{video}: {len(vid)} frames, expected the official {self.num_frames}')
             for i, pth in enumerate(frame_paths):
                 if not os.path.exists(pth):
-                    Image.fromarray(vid[i].asnumpy()).save(pth)
+                    tmp = pth + '.tmp.jpg'
+                    Image.fromarray(vid[i].asnumpy()).save(tmp)
+                    os.replace(tmp, pth)
         return frame_paths
 
     def build_prompt(self, line, video_llm):
