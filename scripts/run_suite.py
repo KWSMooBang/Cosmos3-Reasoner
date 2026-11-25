@@ -235,9 +235,13 @@ def main(argv: list[str] | None = None) -> None:
         print(f"[dry-run] {len(items)} benchmark(s); nothing was executed.")
         return
 
-    for var in ("COSMOS_API_BASE", "LMUData"):
-        if not os.environ.get(var):
-            print(f"Warning: {var} is not set (see .env.example)", file=sys.stderr)
+    if not os.environ.get("COSMOS_API_BASE"):
+        print("Warning: COSMOS_API_BASE is not set (see .env.example)", file=sys.stderr)
+    # vlmeval.smp.LMUDataRoot() silently falls back to ~/LMUData when $LMUData is unset OR missing.
+    lmu = os.environ.get("LMUData")
+    if not lmu or not Path(lmu).is_dir():
+        sys.exit(f"Error: LMUData={lmu!r} is not an existing directory; VLMEvalKit would silently use "
+                 f"~/LMUData instead. Create it (e.g. mkdir -p /data0/Cosmos3-Reasoner/LMUData) or fix .env.")
 
     configs_dir.mkdir(parents=True, exist_ok=True)
     conc = args.concurrency or suite.get("concurrency", 1)
