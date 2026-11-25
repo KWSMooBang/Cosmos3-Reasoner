@@ -8,8 +8,9 @@
      a) the verbatim official scorer (eval/print_test_score.py calculate_accuracy, EvalAI-equivalent),
      b) lmms-eval tasks/physbench @ 9134731 (process_results + aggregate, reproduced below verbatim
         apart from logging).
-   Also runs PhysBench.evaluate() end to end on an xlsx prediction file (asserts inside evaluate()
-   compare with the official scorer again).
+   A second set nulls 5% of the replies plus every empty-label row (official null semantics: wrong in
+   Overall, skipped in per-type totals). Also runs PhysBench.evaluate() end to end on an xlsx
+   prediction file with those nulls (asserts inside evaluate() compare with the official scorer again).
 4. PhysBench_val: 200 rows; val_answer.json answers equal test_answer.json (14 rows differ in taxonomy).
 
     PYTHONPATH=third_party/vlmevalkit-cosmos python scripts/test_physbench_scoring.py
@@ -93,14 +94,14 @@ def main() -> None:
         gts = [r['answer'] for r in rows]
         hit, len_hit, lmms, lmms_hit = pb.score_rows(preds, gts)
         df = pd.DataFrame(dict(hit=hit, hit_lenient=len_hit, lmms_hit=lmms_hit,
-                               has_label=[bool(g) for g in gts],
+                               has_label=[bool(g) for g in gts], answered=[p is not None for p in preds],
                                task_type=[r['task_type'] for r in rows], sub_type=[r['sub_type'] for r in rows],
                                ability_type=[r['ability_type'] for r in rows]))
         return pb.summarize(df), hit, lmms
 
     def official(preds, rows, lab_path, tag):
         sub = tmp / f'{tag}.json'
-        json.dump([{'idx': r['idx'], 'answer': p} for r, p in zip(rows, preds)], open(sub, 'w'))
+        json.dump([{'idx': r['idx'], 'answer': p} for r, p in zip(rows, preds)], open(sub, 'w'))  # None -> null
         return calculate_accuracy(str(lab_path), str(sub))
 
     def compare(tag, preds, rows, lab_path):
@@ -108,9 +109,12 @@ def main() -> None:
         off = official(preds, rows, lab_path, tag)
         mism = 0
         for r, p, h in zip(rows, preds, hit):
-            if pb.official_hit(p, r['answer']) != h or \
-                    (p == r['answer'] or p.startswith(r['answer'])) != h:
+            # official: None is skipped (never correct); otherwise answer_true
+            ref = False if p is None else (p == r['answer'] or p.startswith(r['answer']))
+            if pb.official_hit(p, r['answer']) != h or ref != h:
                 mism += 1
+        if off['overall_correct'] != sum(hit) or off['overall_total'] != len(rows):
+            mism += 1
         if abs(off['overall_accuracy'] - s['Overall']) > 1e-9:
             mism += 1
         for kind, pre in (('task_type_accuracy', ''), ('sub_type_accuracy', None), ('ability_type_accuracy', 'ability/')):
@@ -124,7 +128,8 @@ def main() -> None:
                     print('  table mismatch', tag, key, v, s[key])
         docs = lmms_process_docs(rows)
         doc_pred = {r['idx']: p for r, p in zip(rows, preds)}
-        res = [lmms_process_results(d, [doc_pred[d['idx']]])['physbench_accuracy'] for d in docs]
+        # lmms-eval never sees a null; an unanswered doc is an empty generation there
+        res = [lmms_process_results(d, [doc_pred[d['idx']] or ''])['physbench_accuracy'] for d in docs]
         l_over, l_task = lmms_aggregate(res)
         our_l = dict(zip([r['idx'] for r in rows], lmms))
         lm = sum(r['pred_answer'] != our_l[r['idx']] for r in res)
@@ -166,14 +171,29 @@ def main() -> None:
         preds.append(rng.choice(TEMPLATES).format(L=L, l=L.lower(), M=M))
     s = compare('synthetic', preds, labels, label_path)
 
-    # end-to-end evaluate() on an xlsx prediction file (as run.py writes it)
-    df = pd.DataFrame(dict(index=[r['idx'] for r in labels], prediction=preds,
+    # 3b. nulls (official: wrong in Overall, skipped in per-type totals), incl. every empty-label row
+    empty = {r['idx'] for r in labels if not r['answer']}
+    preds_null = [None if (r['idx'] in empty or rng.random() < 0.05) else p for r, p in zip(labels, preds)]
+    s_null = compare('synthetic_nulls', preds_null, labels, label_path)
+    if s_null['n_unanswered'] != sum(p is None for p in preds_null):
+        fails.append('n_unanswered wrong')
+    preds_gt_null = [None if r['idx'] in empty else r['answer'] for r in labels]
+    s_gn = compare('gt_with_nulls_on_empty_labels', preds_gt_null, labels, label_path)
+    print(f'  nulls: {sum(p is None for p in preds_null)} in synthetic_nulls; GT with the 17 empty-label rows null -> '
+          f'{s_gn["Overall"]:.4f} (17 wrong; per-domain 100: {all(s_gn[t] == 100.0 for t in pb.TASK_ORDER)})')
+
+    # end-to-end evaluate() on an xlsx prediction file (as run.py writes it; nulls -> empty cells).
+    # An empty reply '' also loads back as an empty cell, i.e. null: expected = '' -> None.
+    s = compare('synthetic_nulls_xlsx', [None if p == '' else p for p in preds_null], labels, label_path)
+    df = pd.DataFrame(dict(index=[r['idx'] for r in labels], prediction=preds_null,
                            question=['q'] * len(labels)))
     ef = tmp / 'model_PhysBench.xlsx'
     dump(df, str(ef))
     fake = types.SimpleNamespace(label_file='test_answer.json', expected=10002, dataset_name='PhysBench')
     out = pb.PhysBench.evaluate(fake, str(ef))
-    if abs(out['Overall'] - s['Overall']) > 1e-9 or out['evaluation_scope'] != 'full':
+    if (abs(out['Overall'] - s['Overall']) > 1e-9 or out['evaluation_scope'] != 'full'
+            or out['n_unanswered'] != s['n_unanswered']
+            or any(abs(out[t] - s[t]) > 1e-9 for t in pb.TASK_ORDER)):
         fails.append(f'evaluate() {out["Overall"]} != {s["Overall"]} / scope {out["evaluation_scope"]}')
     print(f'evaluate(): Overall {out["Overall"]:.4f} official {out["official_overall"]:.4f} scope {out["evaluation_scope"]}')
 
