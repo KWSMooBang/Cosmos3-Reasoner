@@ -10,9 +10,11 @@ For a ReVSI key (default ReVSI_64frame, N = 64):
      client preprocessing (prepare_inputs -> qwen-vl-utils -> base64 mp4), capturing the frame
      tensor that would be sent. Checks: T == N, and frame i of the request is frame i of the
      official mp4 (nearest-neighbour match over all N decoded frames, on 32x24 thumbnails).
-  4. Provenance: for --provenance scenes, decodes the all-frame video from video.zip and checks
-     that frame i of the N-frame mp4 is all-frame frame sampled_video_frame_idx[scene]['<N>-frame'][i]
-     (nearest neighbour within +-5 frames).
+  4. Provenance (informational): for --provenance scenes, decodes the all-frame video from video.zip
+     and reports whether frame i of the N-frame mp4 is all-frame frame
+     sampled_video_frame_idx[scene]['<N>-frame'][i] (nearest neighbour within +-5 frames). Exact for
+     every 64-frame scene checked; some 32/16-frame encodes of long ARKitScenes videos are a few
+     frames off (property of the official files; fails only on a frame-count mismatch).
   5. Non-VIDEO_LLM path: save_video_frames returns N images.
   6. Prints the prompt of one numeric and one multiple-choice question.
 
@@ -144,10 +146,17 @@ def main(argv=None) -> None:
                 for i, j in enumerate(sel):
                     lo, hi = max(0, j - 5), min(len(allf), j + 6)
                     offs.append(int(np.argmin(((ta[lo:hi] - ts[i]) ** 2).mean(-1)) + lo - j))
-                ok = len(sel) == n == len(sub) and all(o == 0 for o in offs)
-                print(f"[{'OK' if ok else 'FAIL'}] provenance {scene}: {n}-frame mp4 frame i == all-frame frame "
-                      f"sampled_video_frame_idx[i] for {sum(o == 0 for o in offs)}/{len(sel)} "
-                      f"(all-frame video {len(allf)} frames; idx {sel[:3]}...{sel[-2:]})")
+                # Observed on the official files: 64-frame encodes match exactly; some 32/16-frame encodes
+                # of long ARKitScenes videos match a neighbouring all-frame frame (offsets -1..-5 seen, <=0.5 s at 10 fps). That is a
+                # property of the official mp4s (which are what upstream sends too) -> informational WARN;
+                # only a frame-count mismatch fails.
+                exact = all(o == 0 for o in offs)
+                ok = len(sel) == n == len(sub)
+                tag = "OK" if ok and exact else ("WARN" if ok else "FAIL")
+                print(f"[{tag}] provenance {scene}: {n}-frame mp4 frame i == all-frame frame "
+                      f"sampled_video_frame_idx[i] for {sum(o == 0 for o in offs)}/{len(sel)}"
+                      + ("" if exact else f", nearest-frame offsets {sorted(set(offs))}")
+                      + f" (all-frame video {len(allf)} frames; idx {sel[:3]}...{sel[-2:]})")
                 if not ok:
                     fails.append(f"provenance {scene}: offsets {offs}")
 

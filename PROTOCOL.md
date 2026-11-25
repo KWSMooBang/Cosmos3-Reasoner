@@ -177,6 +177,13 @@ frame budget (questions about objects not visible in the N frames were removed b
   `linspace(0, N-1, N)` over an N-frame video is the identity, so every official frame is sent once, in
   order (fps sent = the mp4's fps, i.e. the frames' original timestamps). Proof on the real files:
   `scripts/check_revsi_frames.py` (see below); synthetic: `scripts/check_video_sampling.py`.
+  Evidence (2026-11-25, `cosmos3_nano_nothink` layer, endpoint stubbed): for sampled scenes of every key the
+  request carries exactly N frames (64/32/16) at native size (640x480 / 480x640), request frame i ==
+  mp4 frame i for all i, `mm_processor_kwargs={do_sample_frames: false, fps: <mp4 fps>}`; the image path
+  yields N images. Provenance vs `sampled_video_frame_idx.json` (all-frame video): exact for every
+  64-frame scene checked (7); some 32/16-frame encodes of long ARKitScenes videos match a neighbouring
+  all-frame frame (offsets -1..-5, <= 0.5 s) - a property of the official files, which upstream sends too.
+  `video.zip` sha256 `7d10f8a5...eabb9fe` (= HF LFS oid).
   Non-VIDEO_LLM clients get all N frames as images. The class rejects `nframe != N` and `fps > 0`.
 - **Prompt** (official, verbatim): `These are frames of a video.\n<question>\n` + numeric:
   `Answer the question using a single integer or decimal number.`; MCQ:
