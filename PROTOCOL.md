@@ -212,6 +212,11 @@ frame budget (questions about objects not visible in the N frames were removed b
   Per-row results: `<eval>_revsi_score.xlsx` (`parse_mode` official/fallback/fail); per-task table
   `<eval>_acc.csv` (n, score, score_official, n_fallback, n_unparsed).
 - **No judge.** `evaluate()` ignores `--judge`.
+- **Upstream quirks (kept for parity).** MRA is computed exactly as upstream:
+  `abs(p - t) / t <= 1 - np.linspace(0.5, 0.95, 10)` in float64. A relative error that sits exactly on a
+  threshold passes or fails depending on float rounding: `120` vs `100` scores 0.6 (0.2 > 1-0.80 =
+  0.19999999999999996), while `1.2` vs `1.0` scores 0.7 and exact maths would give 0.7 for both. We do not
+  fix this, so our numbers match the official scorer bit-for-bit (tested in `test_revsi_scoring.py`).
 - **Differences from the paper setup** (besides the client/server of §1-3): the paper ran Qwen3-VL
   through SWIFT / lmms-eval (HF transformers or vLLM, greedy, lmms-eval `max_new_tokens 16`); here the
   model defaults apply (greedy, `max_tokens` 8192/16384) and frames are re-encoded by the client at

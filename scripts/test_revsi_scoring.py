@@ -150,7 +150,12 @@ def test_mra():
     for _ in range(2000):
         t = rng.uniform(0.1, 50); p = rng.uniform(0, 100)
         assert R.mean_relative_accuracy(p, t) == up(p, t)
-    print("[OK] MRA thresholds 0.50..0.95 (10), matches upstream formula")
+    # Upstream float quirk kept for parity (PROTOCOL §6.1 "upstream quirks"): relative errors that sit
+    # exactly on a threshold pass or fail depending on float rounding.
+    assert R.mean_relative_accuracy(120.0, 100.0) == 0.6   # exact math: 0.7 (0.2 <= 1-0.8)
+    assert R.mean_relative_accuracy(80.0, 100.0) == 0.6    # exact math: 0.7
+    assert R.mean_relative_accuracy(1.2, 1.0) == 0.7       # same relative error, other side of the boundary
+    print("[OK] MRA thresholds 0.50..0.95 (10), matches upstream formula incl. float-boundary quirk")
 
 
 def test_avg_is_task_mean():
