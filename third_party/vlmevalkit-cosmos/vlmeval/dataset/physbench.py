@@ -70,7 +70,7 @@ SHA256 = {
     'test_answer.json': '229ddf9be156dbb93f23af5fc714addb144a781638dff89a571034c907f12446',
     'val_answer.json': 'b960d24d8f573ddc1a8a4472e0684065b4f28b90a96c7f34947b5c8c45d15940',
 }
-BUILD_VERSION = 3  # 2: video_frames / video_nframes columns; 3: val TSV uses the val_answer.json taxonomy
+BUILD_VERSION = 4  # 2: video_frames / video_nframes; 3: val taxonomy; 4: media manifest digest
 
 # official eval/eval_utils/task_evaluator.py
 TEST_FRAME = 8
@@ -217,42 +217,9 @@ def _ensure_file(root, name):
     raise RuntimeError(f'{path}: sha256 {digest} != pinned {SHA256[name]}')
 
 
-def _missing(root, files):
-    out = []
-    for f in files:
-        p = media_path(root, f)
-        if not (os.path.isfile(p) and os.path.getsize(p) > 0):
-            out.append(f)
-    return out
-
-
 def media_path(root, fname):
     sub = 'video' if fname.lower().endswith('.mp4') else 'image'
     return os.path.join(root, sub, fname)
-
-
-def _extract(zip_path, dst_dir, wanted):
-    """Extract the members whose basename is in `wanted` into dst_dir/<basename> (flat, path-safe)."""
-    os.makedirs(dst_dir, exist_ok=True)
-    n = 0
-    with zipfile.ZipFile(zip_path) as zf:
-        for info in zf.infolist():
-            if info.is_dir():
-                continue
-            base = os.path.basename(info.filename)
-            if base not in wanted:
-                continue
-            out = os.path.join(dst_dir, base)
-            tmp = f'{out}.{os.getpid()}.part'
-            with zf.open(info) as src, open(tmp, 'wb') as dst:
-                while True:
-                    buf = src.read(1 << 22)
-                    if not buf:
-                        break
-                    dst.write(buf)
-            os.replace(tmp, out)
-            n += 1
-    return n
 
 
 def frame_budget(n_frames: int) -> int:
@@ -263,31 +230,89 @@ def frame_budget(n_frames: int) -> int:
     return min(TEST_FRAME, n_frames - n_frames % 2)
 
 
-def video_frame_counts(root, videos):
-    """Decoded frame count per mp4 (decord, the reader qwen-vl-utils uses), cached in
-    <root>/video_frames.json keyed by name with the file size."""
+def _decord_frames(path) -> int:
     import decord
-    cache_path = os.path.join(root, 'video_frames.json')
-    cache = {}
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            cache = json.load(f)
-    out, dirty = {}, False
-    for v in videos:
-        p = media_path(root, v)
-        size = os.path.getsize(p)
-        hit = cache.get(v)
-        if not hit or hit[1] != size:
-            hit = [len(decord.VideoReader(p)), size]
-            cache[v] = hit
-            dirty = True
-        out[v] = hit[0]
-    if dirty:
-        tmp = f'{cache_path}.{os.getpid()}.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(cache, f)
-        os.replace(tmp, cache_path)
+    return len(decord.VideoReader(path))
+
+
+def _extract_hashed(zip_path, dst_dir, wanted):
+    """Extract members whose basename is in `wanted` to dst_dir/<basename> (flat, path-safe, atomic).
+    Returns {basename: (size, sha256)} hashed from the decompressed zip stream (zipfile checks each
+    member's CRC; the zip itself is sha256-pinned)."""
+    os.makedirs(dst_dir, exist_ok=True)
+    out = {}
+    with zipfile.ZipFile(zip_path) as zf:
+        for info in zf.infolist():
+            base = os.path.basename(info.filename)
+            if info.is_dir() or base not in wanted:
+                continue
+            dst_path = os.path.join(dst_dir, base)
+            tmp = f'{dst_path}.{os.getpid()}.part'
+            h, size = hashlib.sha256(), 0
+            with zf.open(info) as src, open(tmp, 'wb') as dst:
+                while True:
+                    buf = src.read(1 << 22)
+                    if not buf:
+                        break
+                    h.update(buf)
+                    size += len(buf)
+                    dst.write(buf)
+            os.replace(tmp, dst_path)
+            out[base] = (size, h.hexdigest())
+    missing = set(wanted) - set(out)
+    if missing:
+        raise RuntimeError(f'{len(missing)} members not in {zip_path}, e.g. {sorted(missing)[:3]}')
     return out
+
+
+def ensure_media(root, files):
+    """Extracted media verified against <root>/media_manifest.json.
+
+    The manifest holds, per file, the size and sha256 of the zip member (hashed while extracting),
+    the mtime_ns of the extracted file and, for videos, the decord frame count. Every load checks
+    size + mtime_ns of every needed file (stat only); PHYSBENCH_VERIFY_MEDIA=1 re-hashes every file.
+    A file that is missing, differs or has no entry is re-extracted from the pinned zip and its entry
+    (incl. frame count) rewritten. Returns {file: entry} for `files`."""
+    path = os.path.join(root, 'media_manifest.json')
+    zips = {'image.zip': SHA256['image.zip'], 'video.zip': SHA256['video.zip']}
+    man = {'version': 1, 'zips': zips, 'files': {}}
+    if os.path.exists(path):
+        with open(path) as f:
+            cur = json.load(f)
+        if cur.get('version') == 1 and cur.get('zips') == zips:
+            man = cur
+    full = os.environ.get('PHYSBENCH_VERIFY_MEDIA') == '1'
+    bad = []
+    for f in files:
+        e, p = man['files'].get(f), media_path(root, f)
+        try:
+            st = os.stat(p)
+        except FileNotFoundError:
+            st = None
+        if (e is None or st is None or st.st_size != e['size'] or st.st_mtime_ns != e['mtime_ns']
+                or (full and _sha256(p) != e['sha256'])):
+            bad.append(f)
+    if bad:
+        for z, sub in (('image.zip', 'image'), ('video.zip', 'video')):
+            want = {f for f in bad if (sub == 'video') == f.lower().endswith('.mp4')}
+            if not want:
+                continue
+            got = _extract_hashed(_ensure_file(root, z), os.path.join(root, sub), want)
+            for f, (size, sha) in got.items():
+                p = media_path(root, f)
+                man['files'][f] = dict(size=size, sha256=sha, mtime_ns=os.stat(p).st_mtime_ns,
+                                       frames=_decord_frames(p) if sub == 'video' else None)
+    for f in files:  # videos recorded without a frame count
+        e = man['files'][f]
+        if f.lower().endswith('.mp4') and e.get('frames') is None:
+            e['frames'] = _decord_frames(media_path(root, f))
+            bad.append(f)
+    if bad:
+        tmp = f'{path}.{os.getpid()}.tmp'
+        with open(tmp, 'w') as fh:
+            json.dump(man, fh)
+        os.replace(tmp, path)
+    return {f: man['files'][f] for f in files}
 
 
 def load_items(root):
@@ -343,20 +368,9 @@ class PhysBench(VideoBaseDataset):
                 rows = [r for r in rows if r['split'] == self.split]
             assert len(rows) == self.expected, (dataset, len(rows))
             files = sorted({f for r in rows for f in json.loads(r['file_name'])})
-            missing = _missing(root, files)
-            if missing:
-                for z, sub in (('image.zip', 'image'), ('video.zip', 'video')):
-                    want = {os.path.basename(f) for f in missing if media_path(root, f).startswith(
-                        os.path.join(root, sub) + os.sep)}
-                    if want:
-                        _extract(_ensure_file(root, z), os.path.join(root, sub), want)
-                missing = _missing(root, files)
-                if missing:
-                    raise RuntimeError(f'{len(missing)} PhysBench media files missing after extraction, '
-                                       f'e.g. {missing[:3]}')
-            counts = video_frame_counts(root, [f for f in files if f.lower().endswith('.mp4')])
+            media = ensure_media(root, files)
             for r in rows:
-                n = counts.get(r['video'])
+                n = media[r['video']]['frames'] if r['video'] != 'none' else None
                 r['video_frames'] = n if n is not None else 0
                 r['video_nframes'] = frame_budget(n) if n is not None else 0
             if self.split != 'all':
@@ -374,7 +388,10 @@ class PhysBench(VideoBaseDataset):
             want_manifest = dict(build_version=BUILD_VERSION, hf_repo=HF_REPO, hf_revision=HF_REVISION,
                                  official_commit=OFFICIAL_COMMIT, n=len(rows),
                                  test_json_sha256=SHA256['test.json'],
-                                 labels_sha256=SHA256[self.label_file])
+                                 labels_sha256=SHA256[self.label_file],
+                                 media_digest=hashlib.sha256(json.dumps(
+                                     [[f, media[f]['sha256'], media[f]['frames']] for f in files]).encode()
+                                 ).hexdigest())
             current = None
             if os.path.exists(manifest) and os.path.exists(tsv):
                 with open(manifest) as f:
