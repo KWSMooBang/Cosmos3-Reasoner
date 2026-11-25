@@ -56,6 +56,7 @@ machine, so it serves only as a reference.
 ```bash
 python scripts/check_suites.py                                         # validate suites (offline)
 python scripts/check_video_sampling.py                                 # prove frame counts per video bench (offline)
+python scripts/check_spacecast_parity.py                               # SpaceCast-Bench vs official evaluator (offline, ~6 min)
 python scripts/run_suite.py --suite configs/suites/smoke.yaml --dry-run # print merged configs, no server
 python scripts/run_suite.py --suite configs/suites/smoke.yaml           # cosmos3_nano_nothink by default
 python scripts/run_suite.py --suite configs/suites/spatial.yaml --model cosmos3_nano_think

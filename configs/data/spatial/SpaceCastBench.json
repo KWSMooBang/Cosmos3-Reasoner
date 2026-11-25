@@ -1,0 +1,5 @@
+{
+  "_source": "HF hongxingli/SpaceCast-Bench @ 45be662c (parquet -> LMUData/SpaceCastBench.tsv + LMUData/images/SpaceCastBench, built on first load); vlmeval class SpaceCastBench (local addition). Official evaluator ZJU-REAL/SpaceCast-Bench @ 6696e5eb, --mode direct.",
+  "_images": "1-8 views per question (main A, bridge views, main B), re-encoded once by the official prepare_image (longest side 1280, JPEG q90) and sent unchanged. No max_pixels: at the Cosmos3 processor (32x32 px per token) a 1280x960 view is 1200 tokens, 8 views + text ~9.8k tokens, which fits max-model-len 16384 at TP=1 (PROTOCOL.md, SpaceCast-Bench).",
+  "class": "SpaceCastBench"
+}
