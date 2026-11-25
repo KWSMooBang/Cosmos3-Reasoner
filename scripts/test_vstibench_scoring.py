@@ -151,6 +151,64 @@ def main(argv=None) -> None:
             bad.append((qt, p, g, o, e_off, L, e_len, mode))
     check("hand-made parse cases", not bad, f"{len(cases) - len(bad)}/{len(cases)}" + (f" bad {bad}" if bad else ""))
 
+    # 5. evaluation_scope / partial headline
+    ids, qts = df["id"].tolist(), df["question_type"].tolist()
+    sc = V.evaluation_scope(ids, qts, ids)
+    check("scope full release", sc["evaluation_scope"] == "full" and not sc["headline_partial"], str(sc))
+    sc = V.evaluation_scope(ids[:-1], qts[:-1], ids)
+    check("scope one question missing", sc["evaluation_scope"] == "subset" and sc["headline_partial"], str(sc))
+    keep = [q != "camera_obj_rel_dist_v1" for q in qts]
+    sc = V.evaluation_scope([i for i, k in zip(ids, keep) if k], [q for q, k in zip(qts, keep) if k], ids)
+    check("scope one type missing", sc["evaluation_scope"] == "subset" and sc["n_types"] == 8, str(sc))
+    sc = V.evaluation_scope(ids + ids[:1], qts + qts[:1], ids)
+    check("scope duplicate row", sc["evaluation_scope"] == "subset" and sc["n_duplicate_rows"] == 1, str(sc))
+
+    # 6. zero numeric targets: the official MRA raises ZeroDivisionError (not caught upstream); the
+    #    release has none, our port raises the same way.
+    nz = V.n_zero_targets(df["question_type"], df["ground_truth"])
+    try:
+        V.official_score("camera_displacement", "1.0", "", "0")
+        raised = False
+    except ZeroDivisionError:
+        raised = True
+    try:
+        off.vsibench_process_results(dict(docs[0], question_type="camera_displacement", ground_truth="0"), ["1.0"])
+        off_raised = False
+    except ZeroDivisionError:
+        off_raised = True
+    check("zero targets", nz == 0 and raised and off_raised,
+          f"{nz} zero targets in the release; target 0 raises ZeroDivisionError: ours {raised}, official {off_raised}")
+
+    # 7. cache manifest: valid as built; tampered pins / video hash / TSV are rejected (non-destructive copies)
+    root = Path(os.environ["LMUData"]) / "VSTIBench"
+    tsv = Path(os.environ["LMUData"]) / "VSTIBench.tsv"
+    man = Path(os.environ["LMUData"]) / "VSTIBench.manifest.json"
+    r = V.validate_cache(str(root), str(tsv), str(man))
+    check("manifest valid", r is None, str(r))
+    m0 = json.loads(man.read_text())
+    with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as td:
+        def tampered(mod):
+            m = json.loads(json.dumps(m0))
+            mod(m)
+            p = Path(td) / "m.json"
+            p.write_text(json.dumps(m))
+            return V.validate_cache(str(root), str(tsv), str(p))
+        v0 = sorted(m0["videos"])[0]
+        cases7 = {
+            "revision": lambda m: m.update(hf_revision="27ff0a2ddb5b22c1eb036a4249345e6f00ee8ea1"),
+            "build_version": lambda m: m.update(build_version=0),
+            "tsv_md5": lambda m: m.update(tsv_md5="0" * 32),
+            "video sha256": lambda m: m["videos"][v0].__setitem__(1, "0" * 64),
+            "video size": lambda m: m["videos"][v0].__setitem__(0, 1),
+            "video list": lambda m: m["videos"].pop(v0),
+        }
+        res7 = {k: tampered(f) for k, f in cases7.items()}
+        tsv2 = Path(td) / "VSTIBench.tsv"
+        tsv2.write_text(tsv.read_text() + "\n")
+        res7["edited TSV"] = V.validate_cache(str(root), str(tsv2), str(man))
+    check("manifest tamper rejected", all(v is not None for v in res7.values()),
+          "; ".join(f"{k}: {v}" for k, v in res7.items()))
+
     if fails:
         print("FAIL:", fails)
         raise SystemExit(1)

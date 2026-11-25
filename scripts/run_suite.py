@@ -239,6 +239,10 @@ def run_one(item: dict[str, Any], model_layer: dict[str, Any], *, model_name: st
             # The headline `score` stays parse_score's Overall (official parser for ReVSI).
             if isinstance(rep["subscores"].get("Overall_lenient"), (int, float)):
                 row["score_lenient"] = rep["subscores"]["Overall_lenient"]
+            # Benches that check release coverage (VSTIBench, 3DSRBench_official, ...): headline_partial=1
+            # means the scored rows are not the full release (evaluation_scope=subset).
+            if rep["subscores"].get("headline_partial") == 1:
+                row["detail"] = "PARTIAL headline (evaluation_scope=subset, not the release metric)"
     (bench_out / "score.json").write_text(json.dumps(row, indent=2), "utf-8")
     return row
 

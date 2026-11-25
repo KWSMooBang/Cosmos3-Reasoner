@@ -380,6 +380,22 @@ extracted mp4s 5.2 GB). No licence on the card; the videos are ScanNet val scans
   - Also reported: the 5 task scores and 9 per-type scores. As for ReVSI, `Overall_lenient` is a diagnostic: the kit's rule extractors
     are used only when the official token is not a valid answer.
   - No judge (`evaluate()` ignores `--judge`). Per-row results go to `<eval>_vstibench_score.xlsx` and the task table to `<eval>_acc.csv`.
+  - **Coverage.** `evaluation_scope` is `full` only when the scored rows are exactly the release: 5,736 unique ids equal
+    to the TSV's, all 9 types at the release counts. Anything else (e.g. `--sample-limit`) is `subset`, with
+    `headline_partial=1` and a warning. `run_suite` then marks the row "PARTIAL headline". Overall is still the mean
+    over the tasks present, so it is not the release metric. Also reported: `n_scored`, `n_types`, `n_duplicate_rows`.
+  - **Zero targets.** The official MRA divides by the target, and a target of 0 raises an uncaught `ZeroDivisionError`
+    upstream. The release has **0** zero targets (numeric targets 0.2–8.2 m), so our port keeps that behaviour,
+    and `n_zero_target` is reported (always 0 on the release).
+- **Cache integrity.** The first load writes `$LMUData/VSTIBench.manifest.json`: HF repo/revision, build version, pinned
+  sha256 of `test.json` (`7c0780c0…`, whose git blob id equals the Hub's `bc83433b`) and `ScanNet.tar.gz` (`33339aa0…`
+  = LFS oid), the TSV md5 (`d7c24a5f2d1c66bb3283114eee67718d`), and size + sha256 of each of the 312 mp4s.
+  - Every load re-validates against the manifest (≈5 s): pins, `test.json` sha256, TSV md5, the video list equal to the
+    one `test.json` references, and every video's size and sha256.
+  - On any mismatch the cache is rebuilt under a lock. A file with the wrong hash is deleted and re-downloaded at the
+    pinned revision; the mp4s are re-extracted and the TSV rebuilt. If the cache is still invalid after that, the load fails.
+  - `test_vstibench_scoring.py` checks that tampered revision, build version, TSV, video hash, video size and video
+    list are all rejected.
 - **Parity / tests** (`scripts/test_vstibench_scoring.py`, offline): GT → 100 (Overall, code9, lenient); garbage → 0.
   The official `utils.py`, imported unchanged, agrees with ours on a 33-template synthetic response set over all 5,736
   questions: 0 per-question mismatches, and its aggregate equals `Overall_code9` (29.750713 both). The paper Avg matches an
@@ -426,6 +442,20 @@ resolution, longest side 640) is released, not the HSSD synthetic split.
     multi_object, the 12 sub-types, `n_questions`, `evaluation_scope` (`full` iff 11,686 rows / 5,157 questions), and the
     diagnostics `vanilla`, `flip_eval`, `flip_circ_eval`, `upstream_circ_eval`. The spatial suite now runs this key.
     The upstream class is untouched, and the key `3DSRBench` stays available.
+  - **Copy validation.** The official script multiplies whatever copies are present. A question with one correct copy and
+    its other ordering(s) missing would therefore count as correct, and a duplicated row would be multiplied in.
+    `3DSRBench_official` first checks the scored rows against the TSV's copy structure (expected copies = every TSV qid
+    with the same group key).
+    - Questions with a missing ordering or a duplicated copy are **excluded** from Overall and the categories, and flagged:
+      `n_incomplete_excluded`, `n_duplicated_excluded`, `n_duplicate_rows`. Qids that are not in the TSV raise an error.
+    - `evaluation_scope` is `full` (`headline_partial=0`) only if all 5,157 questions are scored with every copy exactly
+      once. Otherwise it is `subset` with `headline_partial=1`, a warning, and `run_suite` marks the row "PARTIAL headline".
+      `n_missing_questions` is reported too.
+    - `Overall_present_copies` = the official script on the rows as given (diagnostic). On the full release both are identical.
+    - Upstream `_3DSRBench.evaluate` raises `KeyError` on such partial inputs (e.g. `<id>-flip-1` present but `<id>-1`
+      missing). `3DSRBench_official` therefore reproduces only its hit computation (same judge handling,
+      `mcq_vanilla_eval`, `_result.xlsx`) and recomputes the four upstream settings itself. On full inputs,
+      `upstream_circ_eval` equals the upstream key's `circ_eval` row (tested).
 - **Prompt / images.** The authors' README runs `run.py --data 3DSRBenchv1`, i.e. VLMEvalKit's default
   `ImageMCQDataset.build_prompt` (`Question: …\nOptions:\nA. …\nPlease select the correct answer from the options above. \n`).
   `CosmosReason*` uses exactly this for MCQ datasets (`use_custom_prompt` → False). Images are sent at native resolution (`img_size=-1`).
@@ -433,6 +463,12 @@ resolution, longest side 640) is released, not the HSSD synthetic split.
   laid out like its `_openai_result.xlsx`. Over 8 prediction sets (GT, garbage, all-A, random ×2, GT with 30 % of rotated / flipped
   copies wrong, mixed text answers), ours matches overall, the 4 categories and 12 sub-types (0 mismatches at the
   script's 0.1 rounding), and equals upstream `circ_eval` exactly. Examples: random 22.1 / 21.3 (paper random 20.9); all-A 0.0.
+  All full sets report `evaluation_scope=full`. Partial cases:
+  - one correct copy with its other ordering missing: excluded, Overall 0 (the official script on present copies gives > 0);
+  - a duplicated copy: excluded;
+  - whole questions missing: subset, no exclusions;
+  - an unknown qid: error;
+  - end to end, `evaluate()` on a GT file with the `-1` copy of 50 questions dropped: 50 excluded, n = 5,107, subset, Overall 100.
 - **Difference from the paper:** `--judge exact_matching` (no GPT fallback), so answers the rule extractor cannot parse
   count as wrong. The paper falls back to GPT-4 extraction.
 - **Paper reference (v4 Table, real split, CircularEval).** Columns: Overall / Height / Location / Orientation / Multi-object.

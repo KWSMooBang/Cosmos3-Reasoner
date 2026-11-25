@@ -128,10 +128,66 @@ def main(argv=None) -> None:
                   f"vanilla {up_rows['vanilla']:.2f} flip {up_rows['flip_eval']:.2f} circ {up_rows['circ_eval']:.2f} "
                   f"flip_circ {up_rows['flip_circ_eval']:.2f} | parse_score('3DSRBench') -> {rep['overall']:.2f} "
                   f"(= {picked or 'none'})")
+            if o["evaluation_scope"] != "full" or o["headline_partial"] or o["n_incomplete_excluded"]:
+                mism.append(("scope", o["evaluation_scope"], o["headline_partial"]))
+            if abs(o["upstream_circ_eval"] - up_rows["circ_eval"]) > 1e-9:
+                mism.append(("upstream_circ_eval vs upstream key", o["upstream_circ_eval"], up_rows["circ_eval"]))
             if abs(o["upstream_circ_eval"] - o["Overall"]) > 1e-9:
                 mism.append(("upstream_circ_eval", o["upstream_circ_eval"], o["Overall"]))
             if mism:
                 fails.append((name, mism))
+        # --- partial inputs: missing orderings / duplicated copies / missing questions ---
+        from vlmeval.dataset.threedsrbench_official import official_group_key, score_validated
+        mq, cats = q.tolist(), meta["category"].tolist()
+        gkey = [official_group_key(x) for x in mq]
+        target = gkey[0]
+
+        def check(name, cond, msg):
+            print(f"[{'OK' if cond else 'FAIL'}] {name:30s} {msg}")
+            if not cond:
+                fails.append((name, msg))
+        # (a) one correct copy, its other ordering(s) missing, everything else wrong
+        rows = [(x, c, 1 if g == target else 0) for x, c, g in zip(mq, cats, gkey)
+                if not (g == target and x != target)]
+        r = score_validated(*zip(*rows), mq)
+        check("missing ordering", r["overall"] == 0 and r["n_incomplete_excluded"] == 1 and r["headline_partial"]
+              and r["evaluation_scope"] == "subset" and r["n_questions"] == N_QUESTIONS - 1
+              and r["overall_present_copies"] > 0,
+              f"Overall {r['overall']:.4f} (official script on present copies {r['overall_present_copies']:.4f}), "
+              f"excluded {r['n_incomplete_excluded']}, scope {r['evaluation_scope']}, n={r['n_questions']}")
+        # (b) duplicated copy of a question answered correctly
+        rows = [(x, c, 1) for x, c in zip(mq, cats)] + [(mq[0], cats[0], 1)]
+        r = score_validated(*zip(*rows), mq)
+        check("duplicated copy", r["n_duplicated_excluded"] == 1 and r["n_duplicate_rows"] == 1
+              and r["evaluation_scope"] == "subset" and r["n_questions"] == N_QUESTIONS - 1 and r["overall"] == 100,
+              f"dup rows {r['n_duplicate_rows']}, excluded {r['n_duplicated_excluded']}, scope {r['evaluation_scope']}")
+        # (c) whole questions missing (complete copies of the rest) -> subset, no exclusions
+        keepq = set(sorted(set(gkey))[:100])
+        rows = [(x, c, 1) for x, c, g in zip(mq, cats, gkey) if g in keepq]
+        r = score_validated(*zip(*rows), mq)
+        check("missing questions", r["n_questions"] == 100 and r["n_missing_questions"] == N_QUESTIONS - 100
+              and r["n_incomplete_excluded"] == 0 and r["evaluation_scope"] == "subset" and r["headline_partial"],
+              f"n={r['n_questions']}, missing {r['n_missing_questions']}, scope {r['evaluation_scope']}")
+        # (d) unknown qid
+        try:
+            score_validated(["ZZZZZZZZ"], [cats[0]], [1], mq)
+            check("unknown qid", False, "no error")
+        except ValueError:
+            check("unknown qid", True, "ValueError")
+        # (e) end to end: evaluate() on a GT eval file with the '-1' copy of 50 questions dropped
+        d = td / "e2e_missing"
+        d.mkdir()
+        drop = set(sorted({g for g, x in zip(gkey, mq) if x != g})[:50])
+        pred = meta.drop(columns=["image"]).copy()
+        pred["prediction"] = gt
+        pred = pred[[not (g in drop and x.endswith("-1")) for g, x in zip(gkey, mq)]]
+        ef = d / "M_3DSRBench_official.xlsx"
+        pred.to_excel(ef, index=False)
+        o = ours.evaluate(str(ef), model="exact_matching", nproc=1)
+        check("e2e missing orderings", o["evaluation_scope"] == "subset" and o["headline_partial"]
+              and o["n_incomplete_excluded"] == 50 and o["n_questions"] == N_QUESTIONS - 50 and o["Overall"] == 100,
+              f"Overall {o['Overall']:.2f}, n={o['n_questions']}, excluded {o['n_incomplete_excluded']}, "
+              f"scope {o['evaluation_scope']}")
     if fails:
         print("FAIL", json.dumps(fails, default=str, indent=1))
         raise SystemExit(1)
