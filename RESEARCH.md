@@ -16,8 +16,8 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 
 ## 가설·백로그
 - [x] t001 vlmevalkit-cosmos subtree + 평가 클라이언트 venv + configs/scripts/docs 뼈대 (main cf328c1)
-- [ ] t002 serving/ native vLLM 스크립트 — 완료 보고 받음, codex 리뷰 수정 중
-- [ ] t003 스모크 테스트 (Nano, TP=2) — docker 가 없어 보류. native vLLM 경로 승인 시 진행
+- [x] t002 serving/ native vLLM 스크립트 (main 03cdb9c)
+- [ ] t003 스모크 테스트 (Nano, TP=1, GPU 1) — 진행 중
 - [ ] t004 ReVSI 구현 (진행 중) — HF 3dlg-hcvc/ReVSI 4.9GB, 64 frames, MRA+acc. 논문 Qwen3-VL-8B 49.1
 - [ ] t005 SpaceCast-Bench 구현 (진행 중) — 3,862 MCQ, 다중 시점 이미지 ≤8장, macro acc. 공식 평가기가 OpenAI 호환 API 지원
 - [ ] Beyond3D — 사람 결정 대기: HD-EPIC 원본 영상 ~115GB 필요(공유 폴더 로그인 가능성), CC-BY-NC, 9,000 MCQ(8 유형, 148 영상),
@@ -33,8 +33,8 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
   KV 여유 ≈3–4GB(≈20k tokens) → max-model-len 과 프레임/해상도 상한을 낮춰야 함. 안 되면 TP=2.
 - 2026-11-25: native vLLM 0.32.0+cu129 사용 (Cosmos3 지원 v0.23.0+, cu12 wheel 최신). NVIDIA 이미지(vLLM bfee6a80, CUDA 13)는 driver 550 에서 불가.
   vLLM cosmos3.py 는 understanding 가중치만 로드 → Nano TP=1(≈17.6GB), 스모크는 max-model-len 16384. 보고서 대비 비교는 TP=2/65536.
-- 2026-11-25: 스모크 테스트는 GPU 0,1 만 사용 (사람 지시). harness launch.sh 는 GPU 를 스스로 고르므로
-  스모크는 CUDA_VISIBLE_DEVICES=0,1 로 직접 실행한다.
+- 2026-11-25: 스모크 테스트는 GPU 1 만 사용, Qwen 베이스라인 없이 Nano 만 (사람 지시). harness launch.sh 는 GPU 를 스스로 고르므로
+  스모크는 CUDA_VISIBLE_DEVICES=1 로 직접 실행한다. t002 main 병합·push 03cdb9c.
 
 ## GPU 예산
 - 미정 (스모크 ≈ 2 GPU × 1h). 전체 벤치 실행 전 사람과 정한다.
