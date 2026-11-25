@@ -83,6 +83,8 @@ writes `results/raw/<model>/<suite>/_configs/<bench>__<mode>.json`, runs the sto
 that run** (exact file name, mtime after launch; older files are ignored) in
 `<bench>/<mode>/score.json` (`run.log` next to it). Useful flags: `--benchmarks A,B`,
 `--sample-limit N` (0 = full), `--sample-seed S`, `--concurrency N`, `--work-dir DIR`,
+`--api-nproc N` (parallel requests), `--reuse` (resume an interrupted run: without it run.py moves the
+same-day partial predictions to `bak_*/` and restarts from zero),
 `--model <name|path.json>`.
 
 Model variants (`configs/models/`): `cosmos3_{nano,super}_nothink` (**reproduction default**:

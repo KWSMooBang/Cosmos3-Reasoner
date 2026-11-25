@@ -188,6 +188,10 @@ def run_cmd(config_path: Path, work_dir: Path, item: dict[str, Any]) -> list[str
     if item.get("sample_limit"):
         # Same argv, but go through the sample-limit wrapper instead of stock run.py.
         cmd[1] = str(LIMITED_RUN_PY)
+    if item["run"].get("reuse"):
+        # Without --reuse, run.py moves this day's partial predictions (*_supp.pkl) of the same
+        # work dir into bak_*/ on a re-run, i.e. an interrupted run restarts from zero.
+        cmd.append("--reuse")
     return cmd
 
 
@@ -255,6 +259,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--concurrency", type=int, default=None, help="benches run in parallel (default: suite or 1)")
     ap.add_argument("--work-dir", default=None,
                     help="output root (default: results/raw/<model>/<suite>)")
+    ap.add_argument("--api-nproc", type=int, default=None,
+                    help="override every bench's run.api_nproc (parallel requests to the server)")
+    ap.add_argument("--reuse", action="store_true",
+                    help="pass --reuse to run.py: a re-run resumes from this work dir's finished/partial "
+                         "predictions instead of moving them to bak_*/ (full and limit runs never share a dir)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the merged per-bench config JSON and run.py command; contact no server")
     args = ap.parse_args(argv)
@@ -271,6 +280,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.sample_seed is not None:
         for it in items:
             it["sample_seed"] = args.sample_seed
+    for it in items:
+        if args.api_nproc is not None:
+            it["run"]["api_nproc"] = args.api_nproc
+        if args.reuse:
+            it["run"]["reuse"] = True
     if not items:
         sys.exit("Error: no benchmarks selected.")
 
