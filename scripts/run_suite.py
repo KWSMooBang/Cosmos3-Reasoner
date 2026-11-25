@@ -235,6 +235,10 @@ def run_one(item: dict[str, Any], model_layer: dict[str, Any], *, model_name: st
         else:
             row.update(status="ok", score=rep["overall"], subscores=rep["subscores"],
                        eval_json=rep["eval_json"])
+            # Benches with a diagnostic lenient-parser score (ReVSI: Overall_lenient, PROTOCOL §6.1).
+            # The headline `score` stays parse_score's Overall (official parser for ReVSI).
+            if isinstance(rep["subscores"].get("Overall_lenient"), (int, float)):
+                row["score_lenient"] = rep["subscores"]["Overall_lenient"]
     (bench_out / "score.json").write_text(json.dumps(row, indent=2), "utf-8")
     return row
 
@@ -304,6 +308,8 @@ def main(argv: list[str] | None = None) -> None:
             r = fut.result()
             results.append(r)
             score = f"{r['score']:.2f}" if isinstance(r.get("score"), (int, float)) else "-"
+            if isinstance(r.get("score_lenient"), (int, float)):
+                score += f" (lenient {r['score_lenient']:.2f})"
             print(f"  [{r['status']}] {r['bench']}: {score}  {r.get('detail', '')}")
     ok = sum(r["status"] == "ok" for r in results)
     print(f"\n{ok}/{len(results)} ok. Collect with: python scripts/collect.py")

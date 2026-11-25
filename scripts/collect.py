@@ -7,7 +7,9 @@
 One row per (model, suite, bench, mode) with mode = full | limit<N>_seed<S>; if the same
 combination was run more than once, the newest run wins. Full and subset rows never overwrite
 each other.
-`overall` is parse_score.py's headline Overall (0-100). Sub-scores go into a JSON column.
+`overall` is parse_score.py's headline Overall (0-100). `overall_lenient` is filled only for benches
+that report a diagnostic lenient-parser score (ReVSI `Overall_lenient`; PROTOCOL §6.1), else empty.
+Sub-scores go into a JSON column.
 Rows with a sample_limit are smoke runs and must not be reported as benchmark scores.
 """
 
@@ -20,7 +22,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 FIELDS = ["model", "suite", "domain", "bench", "mode", "sample_limit", "sample_seed", "status",
-          "overall", "finished", "eval_json", "subscores"]
+          "overall", "overall_lenient", "finished", "eval_json", "subscores"]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -40,11 +42,13 @@ def main(argv: list[str] | None = None) -> None:
     for key in sorted(latest, key=lambda k: tuple(str(x) for x in k)):
         r = latest[key]
         score = r.get("score")
+        lenient = r.get("score_lenient", (r.get("subscores") or {}).get("Overall_lenient"))
         rows.append({
             "model": r.get("model"), "suite": r.get("suite"), "domain": r.get("domain", ""),
             "bench": r.get("bench"), "mode": r.get("mode", "full"),
             "sample_seed": r.get("sample_seed", ""), "status": r.get("status"),
             "overall": f"{score:.2f}" if isinstance(score, (int, float)) else "",
+            "overall_lenient": f"{lenient:.2f}" if isinstance(lenient, (int, float)) else "",
             "sample_limit": r.get("sample_limit", ""), "finished": r.get("finished", ""),
             "eval_json": str(Path(r["eval_json"]).relative_to(REPO)) if r.get("eval_json", "").startswith(str(REPO))
             else r.get("eval_json", ""),

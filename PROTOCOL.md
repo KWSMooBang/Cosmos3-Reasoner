@@ -201,16 +201,20 @@ frame budget (questions about objects not visible in the N frames were removed b
   MCQ -> case-insensitive exact match. Task = mean of its sub-type means (Obj. Count = single, multiple;
   Room Size = single, multiple; Rel. Dist = closest, farthest; Rel. Dir = 4 sub-types). **Avg = mean of
   the task columns present** (7; 5 at 16 frames). Reported 0-100.
-- **Answer parsing.** `*_official` keys (`Overall_official`, `<task>_official`) = the official parser
-  bit-for-bit (first whitespace token, `rstrip('.')`; letter match / `float()` + MRA; anything else 0).
-  Headline `Overall` / `<task>` = same, but when the official token is not a valid answer (not one of
-  the option letters / not a finite number) it falls back to the kit's rule extractors
-  (`can_match_option`, `can_match_na` on the text after the last `</think>`; thousands separators
-  removed), e.g. `(B)`, `The answer is B.`, `3m`, `about 2.5 meters`, `four`. Where the official parse
-  succeeds both are identical, so for format-following models `Overall == Overall_official`; compare
-  `Overall_official` with the paper when they differ. No unit conversion (the questions state the unit).
-  Per-row results: `<eval>_revsi_score.xlsx` (`parse_mode` official/fallback/fail); per-task table
-  `<eval>_acc.csv` (n, score, score_official, n_fallback, n_unparsed).
+- **Answer parsing (headline = official parser; L1 decision 2026-11-25).** Headline `Overall` /
+  `<task>` = the official parser bit-for-bit (first whitespace token, `rstrip('.')`; letter match /
+  `float()` + MRA; anything else 0), so it is directly comparable with the paper. This is what
+  `parse_score.py` reports as `overall`, and what `run_suite.py` and `results/summary.csv` show.
+  Diagnostic `Overall_lenient` / `<task>_lenient` = same, but when the official token is not a valid
+  answer (not one of the option letters / not a finite number) it falls back to the kit's rule
+  extractors (`can_match_option`, `can_match_na` on the text after the last `</think>`; thousands
+  separators removed), e.g. `(B)`, `The answer is B.`, `3m`, `about 2.5 meters`, `four`. Where the
+  official parse succeeds both are identical, so `Overall_lenient - Overall` = points lost to answer
+  format (expect ~0 for format-following non-thinking models). `run_suite.py` stores it as
+  `score_lenient` in `score.json`; `results/summary.csv` has it in `overall_lenient` (empty for
+  other benches). No unit conversion (the questions state the unit). Per-row results:
+  `<eval>_revsi_score.xlsx` (`score`, `score_lenient`, `parse_mode` official/fallback/fail); per-task
+  table `<eval>_acc.csv` (n, score, score_lenient, n_fallback, n_unparsed).
 - **No judge.** `evaluate()` ignores `--judge`.
 - **Upstream quirks (kept for parity).** MRA is computed exactly as upstream:
   `abs(p - t) / t <= 1 - np.linspace(0.5, 0.95, 10)` in float64. A relative error that sits exactly on a

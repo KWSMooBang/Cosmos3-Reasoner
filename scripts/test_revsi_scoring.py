@@ -3,11 +3,11 @@
 
 Needs only the ReVSI parquet subsets under $LMUData/ReVSI (downloaded by the dataset class).
 
-  1. ground truth as prediction        -> 100 on every task and on Avg (official and robust)
-  2. ground truth as prediction (paper-style "The answer is ..." text) -> robust 100, official 0
+  1. ground truth as prediction        -> 100 on every task and on Avg (headline=official and lenient)
+  2. ground truth wrapped in text ("The answer is ...") -> headline (official) 0, lenient 100
   3. garbage text                      -> 0
   4. random option letters / random numbers -> chance level (MCQ ~ 1/#options, NQ low)
-  5. hand-made parse cases (official vs robust)
+  5. hand-made parse cases (official/headline vs lenient)
   6. MRA unit checks and agreement with upstream's formula
   7. Avg = mean over the present task columns (16-frame subset has 5 tasks)
 
@@ -51,12 +51,13 @@ def test_ground_truth_is_100():
         df = load_subset(subset)
         df["prediction"] = df["answer"]
         _, summ, table = R.score_dataframe(df)
-        assert math.isclose(summ["Overall"], 100.0) and math.isclose(summ["Overall_official"], 100.0), (key, summ)
+        assert math.isclose(summ["Overall"], 100.0) and math.isclose(summ["Overall_lenient"], 100.0), (key, summ)
         assert all(math.isclose(v, 100.0) for v in table["score"]), (key, table)
+        assert all(math.isclose(v, 100.0) for v in table["score_lenient"]), (key, table)
         assert table["n_fallback"].sum() == 0 and table["n_unparsed"].sum() == 0
         n_tasks = len(table) - 1
         assert n_tasks == (5 if subset == "16_frame" else 7), (key, n_tasks)
-        print(f"[OK] {key}: GT -> Overall {summ['Overall']:.2f} / official {summ['Overall_official']:.2f}, "
+        print(f"[OK] {key}: GT -> Overall {summ['Overall']:.2f} / lenient {summ['Overall_lenient']:.2f}, "
               f"{len(df)} questions, {n_tasks} tasks")
 
 
@@ -65,9 +66,9 @@ def test_wrapped_ground_truth():
     df["prediction"] = ["The answer is " + a + "." if i % 2 else "<think>hmm 7 things</think>\nAnswer: " + a
                         for i, a in enumerate(df["answer"])]
     _, summ, _ = R.score_dataframe(df)
-    assert math.isclose(summ["Overall"], 100.0), summ
-    assert summ["Overall_official"] == 0.0, summ
-    print(f"[OK] wrapped GT text -> robust {summ['Overall']:.2f}, official {summ['Overall_official']:.2f}")
+    assert summ["Overall"] == 0.0, summ
+    assert math.isclose(summ["Overall_lenient"], 100.0), summ
+    print(f"[OK] wrapped GT text -> headline (official) {summ['Overall']:.2f}, lenient {summ['Overall_lenient']:.2f}")
 
 
 def test_garbage_is_zero():
@@ -75,10 +76,10 @@ def test_garbage_is_zero():
     for garbage in ["not an answer", "", "nan", "I cannot determine this from the video"]:
         df["prediction"] = garbage
         _, summ, table = R.score_dataframe(df)
-        assert summ["Overall"] == 0.0 and summ["Overall_official"] == 0.0, (garbage, summ)
+        assert summ["Overall"] == 0.0 and summ["Overall_lenient"] == 0.0, (garbage, summ)
     df["prediction"] = np.nan  # empty prediction (e.g. truncated thinking reply)
     _, summ, _ = R.score_dataframe(df)
-    assert summ["Overall"] == 0.0
+    assert summ["Overall"] == 0.0 and summ["Overall_lenient"] == 0.0
     print("[OK] garbage / empty predictions -> 0")
 
 
@@ -99,13 +100,13 @@ def test_random_is_low():
                          if q in R.TASKS[task]])
         assert abs(tab.loc[task, "score"] - 100 / n_opt) < 6, (task, tab.loc[task, "score"], n_opt)
     assert summ["Overall"] < 30, summ
-    assert math.isclose(summ["Overall"], summ["Overall_official"])
+    assert math.isclose(summ["Overall"], summ["Overall_lenient"])
     print("[OK] random letters / U(0,20) numbers -> " +
           ", ".join(f"{r.task} {r.score:.1f}" for r in table.itertuples()))
 
 
 CASES = [
-    # (question_type, prediction, gt, options, expect_official, expect_robust)
+    # (question_type, prediction, gt, options, expect_official, expect_lenient)
     ("object_counting_single", "4", "4", None, 1.0, 1.0),
     ("object_counting_single", "4.", "4", None, 1.0, 1.0),
     ("object_counting_single", "four", "4", None, 0.0, 1.0),
@@ -132,7 +133,7 @@ CASES = [
 def test_parse_cases():
     for qt, pred, gt, opts, exp_off, exp_rob in CASES:
         off = R.official_score(qt, pred, gt)
-        rob, parsed, mode = R.robust_score(qt, pred, gt, opts)
+        rob, parsed, mode = R.lenient_score(qt, pred, gt, opts)
         assert math.isclose(off, exp_off, abs_tol=1e-9), (qt, pred, gt, off, exp_off)
         assert math.isclose(rob, exp_rob, abs_tol=1e-9), (qt, pred, gt, rob, exp_rob, parsed, mode)
         if exp_off == 1.0:
@@ -156,6 +157,16 @@ def test_mra():
     assert R.mean_relative_accuracy(80.0, 100.0) == 0.6    # exact math: 0.7
     assert R.mean_relative_accuracy(1.2, 1.0) == 0.7       # same relative error, other side of the boundary
     print("[OK] MRA thresholds 0.50..0.95 (10), matches upstream formula incl. float-boundary quirk")
+
+
+def test_summary_keys():
+    df = load_subset("64_frame")
+    df["prediction"] = df["answer"]
+    _, summ, table = R.score_dataframe(df)
+    tasks = list(R.TASKS)
+    assert list(summ) == ["Overall", "Overall_lenient"] + tasks + [f"{t}_lenient" for t in tasks], list(summ)
+    assert list(table.columns[:6]) == ["task", "key", "metric", "n", "score", "score_lenient"]
+    print("[OK] summary keys: Overall/<task> (official parser, headline), Overall_lenient/<task>_lenient")
 
 
 def test_avg_is_task_mean():
