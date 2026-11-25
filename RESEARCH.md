@@ -25,7 +25,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
       비디오를 query 시점까지 잘라 448x448 1fps + 타임스탬프 오버레이로 전처리. 공식 코드는 lmms-eval 포크
 - [x] t007 ReVSI_64frame 전체 평가 (Nano nothink): Overall 51.42 (Qwen3-VL-8B 49.1 / 32B 53.3)
 - [x] t009 SpaceCastBench_CoT 전체 평가 (Nano nothink): Overall 31.80 (Qwen3-VL-4B 34.0)
-- [ ] t008 Beyond3D: 포팅 완료(exp/beyond3d). TP=2/65536 필요 (prompt p50 22.6k). 영상 출처·보정 결정 대기
+- [ ] t008 Beyond3D: 포팅 완료(exp/beyond3d), codex High 3건 수정 대기·병합 보류. TP=2/65536 필요 (prompt p50 22.6k). 영상 출처·보정 결정 대기
 - [ ] t010 QuantiPhy 구현 (진행 중) — 실제 단위 정량 물리량 추론, prior 제공
 - [ ] t011 PhysBench 구현 (진행 중) — ICLR 2025, 이미지/비디오 MCQ
 - [ ] t012 VSTI-Bench 구현 + 3DSRBench 공식 프로토콜 검증 (진행 중)
@@ -49,6 +49,8 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 
 - 2026-11-26: t010–t012 세팅이 끝나면, GPU 1장(TP=1, 16384)에 들어가는 새 벤치들을 GPU 1 에서 순차 전체 평가 (사람 지시).
   대상 후보: QuantiPhy, PhysBench, VSTIBench, 3DSRBench(검증 결과 반영). ReVSI·SpaceCast 는 완료, Beyond3D 는 TP=2 필요 + 데이터 대기라 제외.
+
+- 2026-11-26: t006·t007·t009 main 병합 (사람 승인, 로컬). GPU 1 순차 평가 예산 4–10 GPU-h 승인.
 
 ## GPU 예산
 - 미정. 사용: t003 ≈1.0 GPU-h. t006 ≈3.0, t007 ≈2.9, t009 ≈1.2 GPU-h (누적 ≈8.1). 전체 벤치 실행 전 사람과 정한다.
