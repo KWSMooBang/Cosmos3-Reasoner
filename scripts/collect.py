@@ -4,7 +4,9 @@
     python scripts/collect.py                       # scans results/raw/**/score.json
     python scripts/collect.py --root /data0/... --out results/summary.csv
 
-One row per (model, suite, bench); if a bench was run more than once, the newest run wins.
+One row per (model, suite, bench, mode) with mode = full | limit<N>_seed<S>; if the same
+combination was run more than once, the newest run wins. Full and subset rows never overwrite
+each other.
 `overall` is parse_score.py's headline Overall (0-100). Sub-scores go into a JSON column.
 Rows with a sample_limit are smoke runs and must not be reported as benchmark scores.
 """
@@ -17,8 +19,8 @@ import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-FIELDS = ["model", "suite", "domain", "bench", "status", "overall", "sample_limit",
-          "finished", "eval_json", "subscores"]
+FIELDS = ["model", "suite", "domain", "bench", "mode", "sample_limit", "sample_seed", "status",
+          "overall", "finished", "eval_json", "subscores"]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -30,7 +32,7 @@ def main(argv: list[str] | None = None) -> None:
     latest: dict[tuple, dict] = {}
     for path in sorted(Path(args.root).glob("**/score.json")):
         row = json.loads(path.read_text("utf-8"))
-        key = (row.get("model"), row.get("suite"), row.get("bench"))
+        key = (row.get("model"), row.get("suite"), row.get("bench"), row.get("mode", "full"))
         if key not in latest or row.get("finished", "") >= latest[key].get("finished", ""):
             latest[key] = row
 
@@ -40,7 +42,8 @@ def main(argv: list[str] | None = None) -> None:
         score = r.get("score")
         rows.append({
             "model": r.get("model"), "suite": r.get("suite"), "domain": r.get("domain", ""),
-            "bench": r.get("bench"), "status": r.get("status"),
+            "bench": r.get("bench"), "mode": r.get("mode", "full"),
+            "sample_seed": r.get("sample_seed", ""), "status": r.get("status"),
             "overall": f"{score:.2f}" if isinstance(score, (int, float)) else "",
             "sample_limit": r.get("sample_limit", ""), "finished": r.get("finished", ""),
             "eval_json": str(Path(r["eval_json"]).relative_to(REPO)) if r.get("eval_json", "").startswith(str(REPO))

@@ -68,11 +68,14 @@ model_conf   = {class} | model.defaults | data.video_sampling | model.benchmarks
 dataset_conf = data[bench] | {model_family}
 ```
 
-writes `results/raw/<model>/<suite>/_configs/<bench>.json`, runs the stock
-`run.py --config <json> --verbose --save-eval-results` (cwd = vendored kit) and stores the
-`parse_score.py` headline score in `results/raw/<model>/<suite>/<bench>/score.json`
-(`run.log` next to it). Useful flags: `--benchmarks A,B`, `--sample-limit N` (0 = full),
-`--concurrency N`, `--work-dir DIR`, `--model <name|path.json>`.
+writes `results/raw/<model>/<suite>/_configs/<bench>__<mode>.json`, runs the stock
+`run.py --config <json> --verbose --save-eval-results` (cwd = vendored kit) with work dir
+`results/raw/<model>/<suite>/<bench>/<mode>/`, where `<mode>` is `full` or
+`limit<N>_seed<S>`, and stores the `parse_score.py` headline score of **the eval JSON written by
+that run** (exact file name, mtime after launch; older files are ignored) in
+`<bench>/<mode>/score.json` (`run.log` next to it). Useful flags: `--benchmarks A,B`,
+`--sample-limit N` (0 = full), `--sample-seed S`, `--concurrency N`, `--work-dir DIR`,
+`--model <name|path.json>`.
 
 Model variants (`configs/models/`): `cosmos3_{nano,super}_nothink` (**reproduction default**:
 NVIDIA's `cosmos_eval/models/cosmos.json` settings, T=0, thinking off), `_think` (official
@@ -89,11 +92,14 @@ python scripts/collect.py      # results/raw/**/score.json -> results/summary.cs
 
 Stock VLMEvalKit `run.py` has no sample-limit option. When a suite entry has `sample_limit: N`
 (or `--sample-limit N`), `run_suite.py` launches `scripts/vlmeval_run.py` instead of `run.py`
-with the same arguments plus `VLMEVAL_SAMPLE_LIMIT=N` (`VLMEVAL_SAMPLE_SEED`, default 0). The
+with the same arguments plus `VLMEVAL_SAMPLE_LIMIT=N VLMEVAL_SAMPLE_SEED=S` (`sample_seed`,
+default 0; both are cleared from the environment of full runs). The
 wrapper imports the unmodified `run.py`, and right after `build_dataset_from_config` builds the
 dataset it replaces `dataset.data` with a seeded random subset of N rows (original order kept;
 `dataset.videos` filtered to match). Everything else, including evaluation, is stock. The full
 TSV/videos are still downloaded on first use (the dataset constructor fetches them before the
 subset is taken). Smoke scores are over the subset only and must never be reported as benchmark
-numbers; their `sample_limit` column in `summary.csv` is non-empty. Each suite writes to its own
-`results/raw/<model>/<suite>/`, so smoke predictions never mix with full-suite runs.
+numbers. Subset and full runs never share a run.py work dir (`<bench>/full/` vs
+`<bench>/limit<N>_seed<S>/`; run.py would otherwise reuse the same `T<date>_G<commit>/`
+prediction dir for every run of the day), and `summary.csv` keeps one row per
+(model, suite, bench, mode) with `mode`, `sample_limit` and `sample_seed` columns.
