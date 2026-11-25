@@ -1,0 +1,5 @@
+{
+  "_source": "HF PaulineLi/QuantiPhy-validation @ 2d56ff3 (158 QA, 24 videos, official 480p files; CC BY 4.0 annotations). vlmeval class QuantiPhy (vlmeval/dataset/quantiphy.py): prompt, parser and MRA ported verbatim from github.com/Paulineli/QuantiPhy @ aa8daa7 (run_API_results.py zero-shot v3, evaluator.py). Only split with public GT; the 3,289-QA test split (QuantiPhy_test) has GT withheld. Reference (project page, validation set): Qwen3-VL-8B 32.3, Qwen3-VL-32B 40.2, ChatGPT-5.1 48.4 MRA avg.",
+  "_frames": "Official: every frame of the 480p video. QuantiPhy.build_prompt sends the 480p mp4 as a video message with nframes = 2*floor(n_frames/2) per video, which pins the count and disables every model-level sampling key, so there is no video_sampling block (scripts/check_quantiphy_frames.py proves it). Prompt tokens: scripts/quantiphy_token_budget.py (PROTOCOL.md, QuantiPhy).",
+  "class": "QuantiPhy"
+}

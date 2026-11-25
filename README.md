@@ -65,6 +65,9 @@ python scripts/test_physbench_media.py                                 # PhysBen
 python scripts/check_vstibench_frames.py                              # VSTI-Bench: 32 frames reach the request (needs data)
 python scripts/test_vstibench_scoring.py --official-dir <VLM-3R>/thinking-in-space/lmms_eval/tasks/vstibench   # VSTI-Bench vs official scorer
 python scripts/test_3dsrbench_official.py --official-script <compute_3drbench_results_circular.py>             # 3DSRBench_official vs authors' scorer (~3 min)
+python scripts/test_quantiphy_scoring.py                               # QuantiPhy prompt/parser/MRA vs official code (offline; needs data, fetches official code once)
+python scripts/check_quantiphy_frames.py                               # QuantiPhy: every frame reaches the request (needs data)
+.venv-vllm/bin/python scripts/quantiphy_token_budget.py                # QuantiPhy prompt tokens with the Cosmos3-Nano processor (after check_quantiphy_frames)
 python scripts/run_suite.py --suite configs/suites/smoke.yaml --dry-run # print merged configs, no server
 python scripts/run_suite.py --suite configs/suites/smoke.yaml           # cosmos3_nano_nothink by default
 python scripts/run_suite.py --suite configs/suites/spatial.yaml --model cosmos3_nano_think
@@ -83,6 +86,11 @@ fits TP=1 / 16384) is in the physics suite; `physics/PhysBench_val` (200, answer
 The spatial suite runs `spatial/VSTIBench` (VLM-3R VSTI-Bench, 32 frames, headline = paper Avg) and
 `spatial/3DSRBench_official` (official CircularEval) instead of the upstream `3DSRBench` key, whose 4-setting
 DataFrame parse_score reads as 0.00 (PROTOCOL.md §6, VSTI-Bench / 3DSRBench).
+
+QuantiPhy (`physics/QuantiPhy`) is scored on the official 158-question validation split, the only split with
+public ground truth. Compare it with the project page's validation leaderboard, not with paper Table 1, which
+covers the whole set. `physics/QuantiPhy_test` (3,289 questions, GT withheld) only writes the official
+submission CSV (PROTOCOL.md §6, QuantiPhy).
 
 Per bench, `run_suite.py` composes (same rule as `cosmos_eval/run_all.py`)
 

@@ -59,3 +59,12 @@ Then update this table.
    answer extraction) with the official headline metric of the authors' scorer `compute_3drbench_results_circular.py`
    (HF `ccvl/3DSRBench` @ `5c90e422b68d0484d50a3ff06b3096ea7d288026`, CC-BY-4.0 per the card): CircularEval,
    flipped images as separate questions. The upstream class is untouched. See PROTOCOL.md §6, 3DSRBench.
+7. `vlmeval/dataset/quantiphy.py` (new), `vlmeval/dataset/__init__.py` (one import + `VIDEO_DATASET += [QuantiPhy]`):
+   QuantiPhy dataset (keys `QuantiPhy` = validation split, scored; `QuantiPhy_test` = test split, GT withheld,
+   inference + official submission CSV). System prompt, zero-shot v3 user text (`build_context_prefix`), answer
+   parser (`parse_number`, `num_re`, `EXACT_NUMBER_WITH_UNIT_RE`) and scoring (MRA, category means,
+   bg/obj breakdowns, `invalid_percentage`) ported verbatim from Paulineli/QuantiPhy
+   @ `aa8daa7a5736ce3514ed985189ad27ef4a2e6e68` (`model_run_example/run_API_results.py`, `evaluator.py`;
+   code licence MIT, "Copyright (c) 2025 Puyin Li"). Data: HF `PaulineLi/QuantiPhy-validation` @ `2d56ff3`,
+   `PaulineLi/QuantiPhy` @ `ca0658a` (annotations CC BY 4.0; videos keep their original licences, research
+   and evaluation use). See PROTOCOL.md §6, QuantiPhy.

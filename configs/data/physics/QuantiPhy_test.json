@@ -1,0 +1,5 @@
+{
+  "_source": "HF PaulineLi/QuantiPhy @ ca0658a (official test split, 3,289 QA, 568 videos; GT withheld). vlmeval class QuantiPhy. Inference only: evaluate() writes the official submission CSV (template columns, ids 1..3289 = parquet row order) and the parse-failure rate, no score. Videos: our 480p transcodes (ffmpeg, short side 480, every frame) built on first use, because the repo ships original resolution only.",
+  "_frames": "Same request as QuantiPhy (every frame, nframes pinned per video in the message).",
+  "class": "QuantiPhy"
+}
