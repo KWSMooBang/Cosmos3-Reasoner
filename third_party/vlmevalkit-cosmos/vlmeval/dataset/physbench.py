@@ -174,6 +174,14 @@ def summarize(df):
     out['n'] = n
     out['n_unanswered'] = int(n - len(ans))
     out['Overall_lenient'] = 100.0 * df['hit_lenient'].sum() / n if n else 0.0
+    # Answer-format diagnostics: how much of the headline is a format penalty of the official
+    # startswith rule (e.g. "<answer>B. ...</answer>", "(B)", "The answer is B").
+    out['format_gap'] = out['Overall_lenient'] - out['Overall']
+    out['n_lenient_only'] = int((df['hit_lenient'] & ~df['hit']).sum())
+    if 'prediction' in df:
+        preds = [p for p in df['prediction'] if p is not None]
+        out['n_letter_first'] = sum(bool(re.match(r'[A-Da-d](?![A-Za-z])', p)) for p in preds)
+        out['n_answer_tag'] = sum(p.lstrip().startswith('<answer>') for p in preds)
     lab = df[df['has_label']]
     out['lmms_n'] = len(lab)
     out['lmms_overall'] = 100.0 * lab['lmms_hit'].sum() / len(lab) if len(lab) else 0.0
