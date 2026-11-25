@@ -15,8 +15,8 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - LMUData: /data0/Cosmos3-Reasoner/LMUData
 
 ## 가설·백로그
-- [ ] t001 vlmevalkit-cosmos subtree + 평가 클라이언트 venv + configs/scripts/docs 뼈대
-- [ ] t002 serving/ 스크립트 (docker 버전 + docker 없는 native vLLM 대안), vLLM 의 Cosmos3 지원 여부 조사
+- [x] t001 vlmevalkit-cosmos subtree + 평가 클라이언트 venv + configs/scripts/docs 뼈대 (main cf328c1)
+- [ ] t002 serving/ native vLLM 스크립트 — 완료 보고 받음, codex 리뷰 수정 중
 - [ ] t003 스모크 테스트 (Nano, TP=2) — docker 가 없어 보류. native vLLM 경로 승인 시 진행
 - [ ] Qwen3-VL-8B/32B 베이스라인, 기술 보고서 Table 10 재현
 
@@ -27,6 +27,8 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - 2026-11-25: Nano 는 MoT. understanding 경로 ≈8.8B(≈17.5GB bf16)만 있으면 reasoner 로 쓸 수 있음 → 4090 1장(TP=1) 시도.
   나머지 ≈15GB 는 생성 전용(mlp_moe_gen, 다른 attention 세트, vae, sound_tokenizer). vLLM 이 und 만 로드하는지는 t002 가 확인.
   KV 여유 ≈3–4GB(≈20k tokens) → max-model-len 과 프레임/해상도 상한을 낮춰야 함. 안 되면 TP=2.
+- 2026-11-25: native vLLM 0.32.0+cu129 사용 (Cosmos3 지원 v0.23.0+, cu12 wheel 최신). NVIDIA 이미지(vLLM bfee6a80, CUDA 13)는 driver 550 에서 불가.
+  vLLM cosmos3.py 는 understanding 가중치만 로드 → Nano TP=1(≈17.6GB), 스모크는 max-model-len 16384. 보고서 대비 비교는 TP=2/65536.
 - 2026-11-25: 스모크 테스트는 GPU 0,1 만 사용 (사람 지시). harness launch.sh 는 GPU 를 스스로 고르므로
   스모크는 CUDA_VISIBLE_DEVICES=0,1 로 직접 실행한다.
 
