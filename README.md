@@ -67,6 +67,7 @@ python scripts/test_vstibench_scoring.py --official-dir <VLM-3R>/thinking-in-spa
 python scripts/test_3dsrbench_official.py --official-script <compute_3drbench_results_circular.py>             # 3DSRBench_official vs authors' scorer (~3 min)
 python scripts/test_quantiphy_scoring.py                               # QuantiPhy prompt/parser/MRA vs official code (offline; needs data, fetches official code once)
 python scripts/check_quantiphy_frames.py                               # QuantiPhy: every frame reaches the request (needs data)
+python scripts/test_quantiphy_media.py                                 # QuantiPhy cache integrity: re-download / re-transcode / TSV rebuild (temp copy; network)
 .venv-vllm/bin/python scripts/quantiphy_token_budget.py                # QuantiPhy prompt tokens with the Cosmos3-Nano processor (after check_quantiphy_frames)
 python scripts/run_suite.py --suite configs/suites/smoke.yaml --dry-run # print merged configs, no server
 python scripts/run_suite.py --suite configs/suites/smoke.yaml           # cosmos3_nano_nothink by default
