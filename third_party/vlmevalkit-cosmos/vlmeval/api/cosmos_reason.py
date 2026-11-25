@@ -3,6 +3,7 @@ import os
 import random
 import re
 import string
+import time
 from typing import Literal
 
 import requests
@@ -229,6 +230,38 @@ def _process_video_with_timeout(
     if result[1] is not None:
         raise result[1]
     return result[0]
+
+
+
+# --- Local addition (Cosmos3-Reasoner eval repo, t006): optional raw-response dump ----------
+# Set COSMOS_RAW_DUMP_DIR to write one JSON per request (latency, usage, finish_reason, the
+# sampling knobs actually sent, the last user text and the full generated text). Off by default.
+def _dump_raw_response(payload, response, latency):
+    directory = os.environ.get('COSMOS_RAW_DUMP_DIR')
+    if not directory:
+        return
+    try:
+        import tempfile
+        os.makedirs(directory, exist_ok=True)
+        try:
+            raw = response.json()
+        except Exception:
+            raw = {}
+        choice = (raw.get('choices') or [{}])[0]
+        texts = [c.get('text', '') for m in payload.get('messages', []) if m.get('role') == 'user'
+                 for c in (m.get('content') if isinstance(m.get('content'), list) else []) if c.get('type') == 'text']
+        rec = dict(latency_s=round(latency, 3), status=getattr(response, 'status_code', None),
+                   usage=raw.get('usage'), finish_reason=choice.get('finish_reason'),
+                   sent={k: payload.get(k) for k in ('temperature', 'top_p', 'top_k', 'seed', 'max_tokens',
+                                                      'repetition_penalty', 'presence_penalty',
+                                                      'chat_template_kwargs')},
+                   question=texts[-1] if texts else None,
+                   content=(choice.get('message') or {}).get('content'))
+        fd, path = tempfile.mkstemp(prefix='raw-', suffix='.json', dir=directory)
+        with os.fdopen(fd, 'w') as f:
+            json.dump(rec, f)
+    except Exception as e:  # never break evaluation because of the dump
+        logger.warning(f'raw dump failed: {e}')
 
 
 class CosmosReason(BaseAPI):
@@ -640,7 +673,9 @@ class CosmosReason(BaseAPI):
                 payload['repetition_penalty'] = repetition_penalty
                 payload['presence_penalty'] = presence_penalty
             try:
+                _t0 = time.time()
                 response = requests.post(self.api_base, headers=headers, data=json.dumps(payload), timeout=self.timeout * 1.1)
+                _dump_raw_response(payload, response, time.time() - _t0)
             except requests.exceptions.Timeout:
                 logger.error(f'⚠️  ENDPOINT TIMEOUT: {self.api_base}')
                 logger.error(f'⚠️  The endpoint took longer than {self.timeout}s to respond. It may be down or overloaded.')
