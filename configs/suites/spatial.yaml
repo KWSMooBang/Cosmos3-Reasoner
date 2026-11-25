@@ -26,8 +26,8 @@ benchmarks:
   - spatial/3DSRBench
   - spatial/BLINK
   - spatial/MMVP
-  - spatial/SpaceCastBench         # official direct mode (letter only); macro acc over 16 task types
-  # - spatial/SpaceCastBench_CoT   # official cot mode (README: main experiment); opt in when wanted
+  - spatial/SpaceCastBench_CoT     # official cot mode = official main experiment (default); macro acc over 16 task types
+  # - spatial/SpaceCastBench       # official direct mode (letter only); opt in when wanted
   # --- image VQA / numeric / pointing (rule-based scoring inside the dataset) ---
   - spatial/SparBench
   - spatial/Spatial457

@@ -139,7 +139,7 @@ client's qwen-vl-utils `nframes` sampling is also uniform linspace).
 | RefSpatial, RoboSpatialHome | spatial | image | – | Point2D in-mask | none used | – |
 | QSpatial_plus / _scannet | spatial | image | – | rule extraction (no judge passed) | none (a judge would switch it to LLM extraction) | – |
 | CoreCognition | spatial | image | – | hybrid matcher, exact-match fallback | exact_matching (forces fallback; NVIDIA run.py default would be gpt-4.1) | – |
-| SpaceCastBench (direct), SpaceCastBench_CoT | spatial (CoT opt-in) | 1–8 images | – | official SpaceCast parser + exact set match, macro over 16 types | none | see "SpaceCast-Bench" below |
+| SpaceCastBench_CoT (default), SpaceCastBench (direct) | spatial (direct opt-in) | 1–8 images | – | official SpaceCast parser + exact set match, macro over 16 types | none | see "SpaceCast-Bench" below |
 | PhyX_mini_MC, PhyX_MC | physics | image | – | string-level (`valid_type=STR`) | none | – |
 | SeePhys | physics | image | – | LLM extraction + compare | **`gpt-4o-mini-2024-07-18`** (OpenAI, pinned snapshot) | – |
 
@@ -162,9 +162,18 @@ Local class `vlmeval/dataset/spacecast.py`; the official helpers are a verbatim 
   `RELEASE_CATEGORY_COUNTS` (checked when the TSV is built). Categories are `"<level> / <type>"`,
   so L2 and L3 "Rotate Object Direction" stay separate. On first load the parquet is converted to
   `$LMUData/SpaceCastBench.tsv` (both keys share it) plus `$LMUData/images/SpaceCastBench/<dataset>/<scene>/<frame>`.
-- Keys: `SpaceCastBench` = official `--mode direct` (suffix "Answer with a single letter only (A, B, C, or D). Do not explain.");
-  `SpaceCastBench_CoT` = official `--mode cot` (brief reasoning, last line `Answer: <letter>`). The official
-  README calls cot the main experiment; the spatial suite runs direct and lists CoT as opt-in.
+- Cache integrity: the build writes `$LMUData/SpaceCastBench.manifest.json` (HF repo/revision, parquet
+  sha256, parquet path used, build version, TSV md5, sha256 of every referenced image). Every load
+  re-validates the cache against the manifest (≈0.4 s): pinned revision, TSV md5, image list equal to the
+  images the TSV references, every image present with the same sha256. On any mismatch the cache is
+  rebuilt. Building and validation run under `fcntl.flock` on `$LMUData/SpaceCastBench.lock`, and every
+  temp file is unique per process (pid + uuid), so direct and CoT runs can cold-start concurrently
+  (tested: one process builds, the other waits and then validates). The parquet is the local copy
+  `$LMUData/SpaceCast-Bench/hf/test-00000-of-00001.parquet` if present, else `hf_hub_download` at the
+  pinned revision. Either way its sha256 must equal the pinned LFS oid `27541adf…`, otherwise the build stops.
+- Keys: **`SpaceCastBench_CoT` = official `--mode cot` (default; the official main experiment)**: brief
+  reasoning, last line `Answer: <letter>`. `SpaceCastBench` = official `--mode direct` (suffix "Answer with a
+  single letter only (A, B, C, or D). Do not explain."). The spatial suite runs CoT; direct is a commented opt-in line.
 - Request: system prompt "You are a careful vision-language assistant solving multiple-choice spatial
   reasoning questions about an image.", then one user turn `[prompt text, image_1 … image_n]` (text
   first, images after it with no labels, as in the official OpenAI-compatible backend). Prompt = question, blank line,
@@ -187,13 +196,18 @@ Local class `vlmeval/dataset/spacecast.py`; the official helpers are a verbatim 
   lists) → `parse_prediction` → exact set match. Unparsable or API-failed answers count as wrong.
   Headline `Overall` = macro average over the 16 categories (official `macro_type_accuracy`). Also reported:
   `micro_accuracy`, `L{1,2,3}_macro` (mean of that level's type accuracies), `L{1,2,3}_micro`, per-category
-  accuracy, `n_invalid`, `n_error` and `evaluation_scope` (`subset` for `--sample-limit` runs; the
-  official scorer withholds the macro for partial runs, here it is computed over the categories present).
-  No LLM judge.
+  accuracy, `n_invalid`, `n_error`, `n_lenient_parse` (see quirks below) and `evaluation_scope`.
+  `evaluation_scope` is `full` only when the scored set is the release: 3,862 rows, unique question ids, the
+  sorted id set hashing to the pinned release fingerprint, the per-category counts equal to
+  `RELEASE_CATEGORY_COUNTS`, and 182 scenes. Anything else (e.g. `--sample-limit` runs) is `subset`. The official
+  scorer withholds the macro for partial runs; here it is computed over the categories present. No LLM judge.
 - Parity (`scripts/check_spacecast_parity.py`, no GPU): over all 3,862 questions, prompts (both modes) and
   image order equal the official ones, sampled image bytes (760 images) equal the official `prepare_image`,
   and official `scoring.score` and ours agree per question on a 20-template synthetic response set
-  (0 mismatches, macro 56.72 both). GT-as-prediction gives 100.
+  (0 mismatches, macro 56.72 both; 36 of them flagged `lenient_parse`: `Answer: <option text>`
+  where the text starts with a valid letter). GT-as-prediction gives 100. It also checks that the parquet the builder
+  recorded in the manifest has the pinned sha256, that `release_check` passes on the cache and rejects
+  subset / duplicate-id / foreign-id sets, and the `lenient_parse` flags on the two quirk examples.
 - Differences from the official run (`spacecast_eval/run.py`):
   1. The system prompt reaches the model through `BaseAPI.preprocess_message_with_role`, which appends
      `"\n"` to it. With `CosmosReason3Think` (`*_think`) it is appended to that class's own
@@ -208,6 +222,16 @@ Local class `vlmeval/dataset/spacecast.py`; the official helpers are a verbatim 
      default `max_tokens` 3072, ours 8192 nothink / 16384 think, clamped by vLLM as above).
   5. Files are written under their official `image_paths` (all 2,702 unique views are `.jpg`; a
      non-`.jpg` name would get `.jpg` appended). Built TSV md5 `53e6a9a00a949cde2f49f49790b220b7`, images 365 MB.
+- Upstream parser quirks (kept for parity, scoring unchanged, counted as a diagnostic): the official
+  `parse_answer` / `parse_answers` accept some answers leniently.
+  1. Out-of-range letters are dropped: `Answer: A, Z` → {A} (multi- and single-select).
+  2. The letter-capture regex has no word boundary, so the first letter of a word after `Answer:`
+     becomes the answer: `Answer: Blue chair` → B, even when "Blue chair" is the text of option C
+     (the option-text fallback is only reached when no letter pattern matches).
+  Each scored question gets a `lenient_parse` flag in `*_score.xlsx` (`out_of_range`, `letter_from_word`, or
+  `letter_from_word_conflict` when the segment equals another option's text). The score JSON reports
+  `n_lenient_parse` and `n_lenient_parse_correct` (how many of those are counted correct). A large
+  count means the headline depends on these quirks; report it next to the score.
 
 ## 7. Reproducibility caveats
 

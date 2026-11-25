@@ -8,7 +8,9 @@ $LMUData/SpaceCast-Bench/official_<commit>/) and the HF parquet, then checks
      question; our message = [system prompt, user text, images...] (official api_messages order);
   2. images: same order as the parquet `images`, and (for --image-sample questions) our JPEG file
      bytes == official prepare_image(blob) bytes;
-  3. scoring: a fixed set of synthetic responses (letters, "Answer: X", CoT text, option text,
+  3. data: the parquet the builder used (manifest) has the pinned sha256; release_check rejects subset /
+     duplicate / foreign question ids; lenient_parse flags the two upstream parser quirks;
+  4. scoring: a fixed set of synthetic responses (letters, "Answer: X", CoT text, option text,
      multi-select lists, garbage, empty, API failure) is scored by official scoring.score and by
      SpaceCastBench.evaluate -> identical per-question correctness and identical macro / per-category
      accuracy; GT-as-prediction -> 100.
@@ -94,20 +96,43 @@ def main(argv=None) -> int:
     O_backends = importlib.import_module('spacecast_eval.backends')
     sys.path.insert(0, str(REPO / 'third_party' / 'vlmevalkit-cosmos'))
     from vlmeval.dataset import SpaceCastBench
-    from vlmeval.dataset.spacecast import HF_FILE
+    from vlmeval.dataset import spacecast as SC
     from vlmeval.smp import dump
     import pyarrow.parquet as pq
 
-    parquet = root / 'SpaceCast-Bench' / 'hf' / Path(HF_FILE).name
-    ds_direct = SpaceCastBench('SpaceCastBench')          # builds TSV + images on first use
+    ds_direct = SpaceCastBench('SpaceCastBench')          # validates / builds TSV + images (file lock)
     ds_cot = SpaceCastBench('SpaceCastBench_CoT')
+    parquet = Path(ds_direct.manifest['parquet_path'])    # the file the builder actually used
+    print(f'[data] parquet {parquet} (sha256 pinned {ds_direct.manifest["parquet_sha256"][:12]}…), '
+          f'release_check {ds_direct.manifest["release_check"]}')
+    errors: list[str] = []
+    if SC._hash_file(parquet, 'sha256') != SC.HF_FILE_SHA256:
+        errors.append(f'{parquet}: sha256 differs from the pinned LFS oid')
     table = pq.read_table(parquet, columns=None)
     gold_cols = [c for c in table.column_names if c != 'images']
     gold = table.select(gold_cols).to_pylist()
     data = ds_direct.data
     assert len(gold) == len(data), (len(gold), len(data))
     assert [r['question_uid'] for r in gold] == list(data['question_uid']), 'question order differs'
-    errors: list[str] = []
+    if not SC.release_check(data)['matches_release']:
+        errors.append(f'release_check fails: {SC.release_check(data)}')
+    # a subset / duplicated / foreign-id set must not be labelled full
+    for name, bad in (('subset', data.iloc[:-1]),
+                      ('duplicate uid', data.assign(question_uid=[data['question_uid'][0]] * 2 + list(data['question_uid'][2:]))),
+                      ('foreign uid', data.assign(question_uid=['x'] + list(data['question_uid'][1:])))):
+        if SC.release_check(bad)['matches_release']:
+            errors.append(f'release_check accepts a {name} set')
+    # lenient_parse diagnostic on the two upstream quirks (scoring stays official)
+    row = {'question': 'q', 'options': ['red chair', 'green chair', 'Blue chair'], 'multi_select': False}
+    for resp, want_parse, want_flag in (('Answer: A, Z', ['A'], 'out_of_range'),
+                                        ('Answer: Blue chair', ['B'], 'letter_from_word_conflict'),
+                                        ('Answer: Based on view 2 it is left', ['B'], 'letter_from_word'),
+                                        ('Answer: C', ['C'], ''), ('Reasoning: x.\nAnswer: (B)', ['B'], '')):
+        got = O_protocol.parse_response(resp, row)
+        flag = SC.lenient_parse(resp, row, got)
+        if got != want_parse or flag != want_flag:
+            errors.append(f'lenient_parse {resp!r}: official parse {got}, flag {flag!r}; '
+                          f'expected {want_parse}, {want_flag!r}')
 
     # 1. prompts + message structure
     n_img = []
@@ -182,7 +207,9 @@ def main(argv=None) -> int:
         print(f'[score:{tag}] official macro {o_macro:.4f} / ours {ours["Overall"]:.4f}; '
               f'per-question mismatches {len(mism)}/{len(gold)}; '
               f'L1/L2/L3 macro {ours["L1_macro"]:.2f}/{ours["L2_macro"]:.2f}/{ours["L3_macro"]:.2f}; '
-              f'scope {ours["evaluation_scope"]}')
+              f'scope {ours["evaluation_scope"]}; lenient_parse {ours["n_lenient_parse"]}')
+        if ours['evaluation_scope'] != 'full':
+            errors.append(f'[{tag}] full release scored as {ours["evaluation_scope"]}')
         return ours
 
     synth = [synthetic_response(i, r) for i, r in enumerate(gold)]

@@ -56,12 +56,16 @@ machine, so it serves only as a reference.
 ```bash
 python scripts/check_suites.py                                         # validate suites (offline)
 python scripts/check_video_sampling.py                                 # prove frame counts per video bench (offline)
-python scripts/check_spacecast_parity.py                               # SpaceCast-Bench vs official evaluator (offline, ~6 min)
+python scripts/check_spacecast_parity.py                               # SpaceCast-Bench vs official evaluator (offline, ~6 min; needs the built cache)
 python scripts/run_suite.py --suite configs/suites/smoke.yaml --dry-run # print merged configs, no server
 python scripts/run_suite.py --suite configs/suites/smoke.yaml           # cosmos3_nano_nothink by default
 python scripts/run_suite.py --suite configs/suites/spatial.yaml --model cosmos3_nano_think
 python scripts/run_suite.py --suite configs/suites/physics.yaml --model qwen3vl_8b --benchmarks SeePhys
 ```
+
+SpaceCast-Bench runs in the official **cot** mode by default (`spatial/SpaceCastBench_CoT`, the
+official main experiment); the direct mode `spatial/SpaceCastBench` is a commented opt-in line in
+`spatial.yaml` (PROTOCOL.md §6, SpaceCast-Bench).
 
 Per bench, `run_suite.py` composes (same rule as `cosmos_eval/run_all.py`)
 
