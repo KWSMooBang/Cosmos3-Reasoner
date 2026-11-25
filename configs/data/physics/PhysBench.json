@@ -1,8 +1,10 @@
 {
   "_source": "HF USC-PSI-Lab/PhysBench @ 478fd93d (test.json, image.zip, video.zip; apache-2.0) + official labels USC-GVL/PhysBench @ a7eadc4d eval/physbench/test_answer.json; vlmeval class PhysBench (vlmeval/dataset/physbench.py). All 10,002 items (test 9,802 + val 200), as the paper / leaderboard / EvalAI report. Official scorer eval/print_test_score.py (verbatim in utils/physbench_official.py).",
-  "_frames": "Official test_frame=8 per video (eval/eval_utils/task_evaluator.py). build_prompt sends each mp4 at its <video> position as a video message that pins nframes=8 (qwen-vl-utils linspace over the whole clip), so model-level sampling keys are ignored for this bench (PROTOCOL.md §5). Images and the video are interleaved with the question text in the official order. scripts/check_physbench.py checks the frame count on the real files.",
+  "_frames": "Official test_frame=8 per video (eval/eval_utils/task_evaluator.py). build_prompt sends each mp4 at its <video> position as a video message that pins nframes=8 (qwen-vl-utils linspace over the whole clip; the 19 clips with < 8 frames pin all their frames rounded down to even), so model-level sampling keys are ignored for this bench (PROTOCOL.md §5). Images and the video are interleaved with the question text in the official order. scripts/check_physbench.py checks the frame count on the real files.",
+  "_images": "TP=1 / max-model-len 16384 setting (L1 decision 2026-11-26): per-image cap image_max_pixels = 6,912,000 px (6,750 tokens). Only images above the cap are sent as a resized copy (359 of 10,002 items, 218 unique images); everything else is the original file. Largest prompt 13,476 tokens. Deviation from native resolution, justified by the official GPT-4o run using detail:low (PROTOCOL.md §6, PhysBench). Native resolution: physics/PhysBench_native (needs TP=2 / max-model-len 65536; largest prompt 23.8k).",
   "class": "PhysBench",
   "nframe": 8,
+  "image_max_pixels": 6912000,
   "video_sampling": {
     "nframes": 8
   }

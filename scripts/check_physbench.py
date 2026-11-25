@@ -84,7 +84,9 @@ def main(argv=None) -> None:
         msg = ds.build_prompt(line, video_llm=True)
         files = json.loads(line["file_name"])
         media = [m for m in msg if m["type"] in ("image", "video")]
-        want = [pb.media_path(ds.data_root, f) for f in files]
+        sent = iter(json.loads(line["images"]))
+        want = [pb.media_path(ds.data_root, f) if f.lower().endswith(".mp4") else os.path.join(ds.data_root, next(sent))
+                for f in files]
         if [m["value"] for m in media] != want:
             fails.append(f"{line['index']}: media order")
         for m in media:
@@ -103,6 +105,27 @@ def main(argv=None) -> None:
     for k, v in seq_counter.most_common(12):
         print(f"  {v:6d}  {k}")
     print(f"[{'OK' if not fails else 'FAIL'}] static order check over {len(data)} items")
+
+    # ---------------- 1b. image cap: originals unless above the cap ----------------
+    cap = ds.image_max_pixels
+    n_orig = n_copy = 0
+    for _, line in data.iterrows():
+        imgs = [f for f in json.loads(line["file_name"]) if not f.lower().endswith(".mp4")]
+        for f, sent in zip(imgs, json.loads(line["images"])):
+            with Image.open(pb.media_path(ds.data_root, f)) as im:
+                native = pb.image_tokens(im.height, im.width)[0]
+            if cap is None or native * 1024 <= cap:
+                n_orig += 1
+                if sent != os.path.join("image", f):
+                    fails.append(f"{line['index']}: {f} under the cap but not sent as the original")
+            else:
+                n_copy += 1
+                with Image.open(os.path.join(ds.data_root, sent)) as im:
+                    h, w = im.height, im.width
+                if not ("image_maxpx" in sent and h % 32 == 0 and w % 32 == 0 and h * w <= cap
+                        and pb.image_tokens(h, w)[0] == h * w // 1024):
+                    fails.append(f"{line['index']}: capped copy {sent} {w}x{h}")
+    print(f"[{'OK' if not fails else 'FAIL'}] image slots: {n_orig} originals, {n_copy} capped copies (cap {cap})")
 
     # ---------------- 2. video metadata ----------------
     vids = sorted({f for fl in data["file_name"] for f in json.loads(fl) if f.lower().endswith(".mp4")})
@@ -129,9 +152,10 @@ def main(argv=None) -> None:
     per_item = {}
     for _, line in data.iterrows():
         files = json.loads(line["file_name"])
+        sent = iter(json.loads(line["images"]))  # the image files actually sent (capped copies where needed)
         t_img = t_vid = 0
         for f in files:
-            p = pb.media_path(ds.data_root, f)
+            p = None if f.lower().endswith(".mp4") else os.path.join(ds.data_root, next(sent))
             if f.lower().endswith(".mp4"):
                 _, _, h, w = meta[f]
                 nfr = int(line["video_nframes"])
@@ -155,7 +179,10 @@ def main(argv=None) -> None:
     for thr in (8192, 16384, 32768):
         print(f"  items > {thr}: {(tot > thr).sum()}")
     isz = np.array([h * w for h, w in img_size.values()])
-    print(f"images: {len(img_size)} unique; px min/median/max {isz.min()}/{int(np.median(isz))}/{isz.max()} "
+    n_cap = int((data["n_images_capped"] > 0).sum())
+    print(f"image cap: {ds.image_max_pixels} px -> {n_cap} items / "
+          f"{len({p for p in img_size if 'image_maxpx' in p})} unique images use a resized copy; the rest are the originals")
+    print(f"images sent: {len(img_size)} unique; px min/median/max {isz.min()}/{int(np.median(isz))}/{isz.max()} "
           f"(server max {max_px} px = {max_px // 1024} tokens)")
     if args.out:
         json.dump(per_item, open(args.out, "w"))
@@ -187,6 +214,8 @@ def main(argv=None) -> None:
     for m, ids in by_mode.items():
         pick += rng.sample(ids, min(len(ids), args.sample // 3))
     biggest = sorted(per_item, key=lambda i: -per_item[i]["total"])[:4]
+    capped_ids = data[data["n_images_capped"] > 0]["index"].tolist()
+    pick += rng.sample(capped_ids, min(len(capped_ids), 8))
     longest_v = max(vids, key=lambda v: meta[v][0])
     pick += biggest + [int(data[data["video"] == longest_v]["index"].iloc[0])]
     pick += [int(i) for i in data[data["video"].isin(short)]["index"]]  # every short-clip item

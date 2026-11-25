@@ -1,8 +1,10 @@
 {
-  "_source": "HF USC-PSI-Lab/PhysBench @ 478fd93d + official labels USC-GVL/PhysBench @ a7eadc4d eval/physbench/val_answer.json; vlmeval class PhysBench. Val split only (200 items, split == val; labels equal to the test_answer.json rows). For quick checks / parameter choosing; the reported number is PhysBench (10,002).",
+  "_source": "HF USC-PSI-Lab/PhysBench @ 478fd93d + official labels USC-GVL/PhysBench @ a7eadc4d eval/physbench/val_answer.json; vlmeval class PhysBench. Val split only (200 items, split == val; answers equal to test_answer.json, taxonomy from val_answer.json as the official val scorer). For quick checks / format pilot; the reported number is PhysBench (10,002).",
   "_frames": "As PhysBench: 8 frames per video, pinned in the video message.",
+  "_images": "As PhysBench: image_max_pixels 6,912,000 (13 of 200 items use a resized copy).",
   "class": "PhysBench",
   "nframe": 8,
+  "image_max_pixels": 6912000,
   "video_sampling": {
     "nframes": 8
   }
