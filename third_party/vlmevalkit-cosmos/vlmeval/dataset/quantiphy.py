@@ -328,7 +328,6 @@ def _unit_scale(unit_text):
 
 _UNIT_TOKEN = '|'.join(p for p, _, _ in _UNIT_ALIASES)
 _Q_UNIT_RE = re.compile(r'\b(?:in|\()\s*(' + _UNIT_TOKEN + r')\s*\)?\s*[?.]?\s*$', re.IGNORECASE)
-_A_UNIT_RE = re.compile(r'([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(' + _UNIT_TOKEN + r')(?![a-z])', re.IGNORECASE)
 
 
 def question_unit(question):
@@ -342,9 +341,91 @@ def question_unit(question):
 _EXP_RE = re.compile(r'(/\s*s(?:ec)?)\s*(?:\^\s*2|2)(?![\d.])', re.IGNORECASE)
 
 
+# parse_number's unit list (copied; parse_number itself keeps its verbatim local list)
+_UNITS_TO_REMOVE = [
+    'kilometers', 'kilometer', 'km', 'meters', 'meter', 'm', 'centimeters', 'centimeter', 'cm',
+    'millimeters', 'millimeter', 'mm', 'inches', 'inch', 'in', 'feet', 'foot', 'ft', 'yards', 'yard', 'yd',
+    'hours', 'hour', 'h', 'minutes', 'minute', 'min', 'seconds', 'second', 's',
+    'km/h', 'kph', 'mph', 'ft/s', 'm/s', 'cm/s', 'mm/s',
+    'm/s/s', 'm/s²', 'm/s^2', 'm/s2', 'ft/s²', 'ft/s^2', 'ft/s2', 'cm/s²', 'cm/s^2', 'cm/s2',
+    'mm/s²', 'mm/s^2', 'mm/s2', 'g', 'm^2', 'm²',
+]
+_PARSE_DELIMITERS = ["Final Answer:", "Answer:", "=>", "=", ":", "is:", "The answer is:", "Example:"]
+
+
+def _remove_tracked(chars, idx, old):
+    """str.replace(old, '') on ''.join(chars) (non-overlapping, left to right), keeping source indices."""
+    s = ''.join(chars)
+    out_c, out_i, i = [], [], 0
+    while True:
+        j = s.find(old, i)
+        if j < 0:
+            break
+        out_c.extend(chars[i:j])
+        out_i.extend(idx[i:j])
+        i = j + len(old)
+    out_c.extend(chars[i:])
+    out_i.extend(idx[i:])
+    return out_c, out_i
+
+
+def parse_number_span(text):
+    """Mirror of parse_number that also returns the (start, end) span, in str(text).strip(), of the
+    characters the selected number came from (None if NaN). Value parity with parse_number is tested;
+    lenient_value only trusts the span when both values agree."""
+    if not text or pd.isna(text):
+        return np.nan, None
+    original_text = str(text).strip()
+    if EXACT_NUMBER_WITH_UNIT_RE.match(original_text):
+        m = num_re.search(original_text)
+        if m:
+            try:
+                return abs(float(m.group(0))), (m.start(), m.end())
+            except ValueError:
+                pass
+    text_to_parse, seg_start = original_text, 0
+    last_pos, last_delim = -1, None
+    for delimiter in _PARSE_DELIMITERS:
+        positions = [m.start() for m in re.finditer(re.escape(delimiter), text_to_parse, re.IGNORECASE)]
+        if positions and max(positions) > last_pos:
+            last_pos, last_delim = max(positions), delimiter
+    if last_pos >= 0 and last_delim:
+        parts = text_to_parse.rsplit(last_delim, 1)  # case-sensitive, as the official code
+        if len(parts) > 1:
+            k = text_to_parse.rfind(last_delim) + len(last_delim)
+            after = text_to_parse[k:]
+            seg_start = k + len(after) - len(after.lstrip())
+            text_to_parse = after.strip()
+    chars, idx = [], []
+    for i, c in enumerate(text_to_parse):
+        for lc in c.lower():
+            chars.append(lc)
+            idx.append(seg_start + i)
+    for unit in _UNITS_TO_REMOVE:
+        chars, idx = _remove_tracked(chars, idx, unit)
+    ms = list(num_re.finditer(''.join(chars)))
+    if ms:
+        try:
+            m = ms[-1]
+            return abs(float(m.group(0))), (idx[m.start()], idx[m.end() - 1] + 1)
+        except (ValueError, IndexError):
+            pass
+    ms = list(num_re.finditer(original_text))
+    if ms:
+        try:
+            return abs(float(ms[-1].group(0))), (ms[-1].start(), ms[-1].end())
+        except (ValueError, IndexError):
+            pass
+    return np.nan, None
+
+
+_UNIT_AFTER_RE = re.compile(r'\s*(' + _UNIT_TOKEN + r')(?![a-z])', re.IGNORECASE)
+
+
 def lenient_value(prediction, question):
     """Diagnostic parse: official parse_number after normalising the acceleration exponent ("^2" -> "²"),
-    then rescaled to the question's unit when the unit written right after that number differs."""
+    then rescaled to the question's unit when the unit written directly after the number occurrence the
+    parser selected (parse_number_span) differs. No unit after that occurrence -> no conversion."""
     if _isna(prediction):
         return parse_number(prediction)
     text = _EXP_RE.sub(r'\1²', str(prediction))
@@ -354,17 +435,16 @@ def lenient_value(prediction, question):
     target = question_unit(question)
     if target is None:
         return v
-    for m in reversed(list(_A_UNIT_RE.finditer(text))):
-        try:
-            if abs(float(m.group(1))) != v:
-                continue
-        except ValueError:
-            continue
-        src = _unit_scale(m.group(2))
-        if src is None or src[0] != target[0]:
-            return v
-        return v * src[1] / target[1]
-    return v
+    v2, span = parse_number_span(text)
+    if span is None or v2 != v:
+        return v
+    m = _UNIT_AFTER_RE.match(text.strip(), span[1])
+    if not m:
+        return v
+    src = _unit_scale(m.group(1))
+    if src is None or src[0] != target[0]:
+        return v
+    return v * src[1] / target[1]
 
 
 # ---------------------------------------------------------------------------------------------
