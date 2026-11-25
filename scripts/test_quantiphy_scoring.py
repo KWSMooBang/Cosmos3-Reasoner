@@ -154,6 +154,20 @@ def main() -> None:
     n_nan = sum(math.isnan(ns['parse_number'](r)) for r in responses)
     check(n_mis == 0, f'parse parity: {len(responses)} synthetic responses, {n_mis} mismatches '
           f'({n_nan} unparseable in both)')
+    # parse_number_span (lenient unit binding) must select the same value as the official parser, and its span
+    # must cover exactly that number in the text (after the exponent normalisation lenient_value applies)
+    n_span = 0
+    for r in responses:
+        t = qp._EXP_RE.sub(r'\1²', r)
+        v, span = qp.parse_number_span(t)
+        ok = same(v, ns['parse_number'](t))
+        if ok and span is not None:
+            frag = t.strip()[span[0]:span[1]]
+            nums = qp.num_re.findall(frag)
+            ok = bool(nums) and abs(float(nums[-1])) == v
+        n_span += not ok
+    check(n_span == 0, f'parse_number_span: value == official parse_number and span covers that number on '
+          f'{len(responses)} responses ({n_span} mismatches)')
 
     # 3. scorer parity with the official evaluator.py (unmodified, subprocess)
     with tempfile.TemporaryDirectory() as td:
@@ -250,6 +264,12 @@ def main() -> None:
         ('3 ft', 'What is the height of the box in meters?', 0.9144),
         ('2 m/s', 'What is the length of the block in cm?', 2.0),  # dimension mismatch -> unchanged
         ('42', 'What is the length of the block in cm?', 42.0),     # no unit -> unchanged
+        # unit bound to the occurrence the parser selected, not to another occurrence of the same number
+        ('0.5 m wide. Final Answer: 0.5', 'What is the width of the box in cm?', 0.5),
+        ('2 m, so the answer is: 2', 'What is the length of the block in cm?', 2.0),
+        ('Answer: 50 cm (0.5 m)', 'What is the width of the box in cm?', 50.0),
+        ('0.5 cm? No. Final Answer: 0.5 m', 'What is the width of the box in cm?', 50.0),
+        ('  The speed is 3.6 km/h', 'What is the speed of the car in m/s?', 1.0),
     ]
     for text, q, exp in conv:
         got = qp.lenient_value(text, q)

@@ -694,7 +694,10 @@ mirror of the test repo (same files, older README) and is not used.
   correctly. The published GPT-5.1 file has no such 2s (and has negative values the current parser cannot produce),
   so it came from an earlier parser version. Diagnostic `*_lenient` keys (`Overall_lenient`, `{cat}_lenient`,
   `n_lenient_changed`) first rewrite the exponent (`/s^2` → `/s²`), then convert the reply's unit to the asked unit
-  (length / velocity / acceleration; e.g. `0.25 m` for a question in cm → 25). Report `Overall` and give
+  (length / velocity / acceleration; e.g. `0.25 m` for a question in cm → 25). The unit used is the one written
+  directly after the number occurrence the official parser selected (`parse_number_span`, a span-tracking mirror
+  of `parse_number`; same value on all 4,424 test replies); a unit after another occurrence of the same number is
+  ignored (`0.5 m wide. Final Answer: 0.5` → 0.5, no conversion). Report `Overall` and give
   `Overall_lenient` next to it.
 - Differences from the official run:
   1. Frames go as one video, not N images: Qwen3-VL merges frame pairs temporally and gives timestamps; the
