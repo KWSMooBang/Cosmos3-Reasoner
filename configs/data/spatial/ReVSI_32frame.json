@@ -1,0 +1,9 @@
+{
+  "_source": "HF 3dlg-hcvc/ReVSI @ 345a811 (apache-2.0); vlmeval class ReVSI (vlmeval/dataset/revsi.py, ported from official VLMEvalKit revsi.py @ f5296f0 / lmms-eval tasks/revsi @ 9134731). Questions: parquet subset 32_frame. Frames: official pre-sampled video.zip:32_frame/<scene>.mp4 (exactly 32 frames). Paper Table 12 (Qwen3-VL-8B 45.6, 32B 51.2 Avg).",
+  "_frames": "ReVSI.build_prompt sends the raw 32-frame mp4 as a video message without sampling keys; the client samples with model-level nframes=32 (video_sampling below), and qwen-vl-utils linspace(0,31,32) on a 32-frame video is the identity, so all 32 official frames are sent (scripts/check_revsi_frames.py; scripts/check_video_sampling.py). Dataset nframe=32 is the non-VIDEO_LLM path (all 32 frames as images) and is enforced by the class.",
+  "class": "ReVSI",
+  "nframe": 32,
+  "video_sampling": {
+    "nframes": 32
+  }
+}
