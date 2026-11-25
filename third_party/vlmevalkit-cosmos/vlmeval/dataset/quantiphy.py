@@ -1,0 +1,603 @@
+"""QuantiPhy (CVPR 2026): quantitative physical reasoning from video in real-world units.
+
+Project page: https://quantiphy.stanford.edu/   Paper: arXiv 2512.19526
+Data (CC BY 4.0 annotations; videos keep their original licences):
+  * HF PaulineLi/QuantiPhy-validation @ 2d56ff31c22c12bf377b2c2092ff229d291fd830  (158 QA, GT released, 480p videos)
+  * HF PaulineLi/QuantiPhy            @ ca0658a1ffba930b8170223db7a377cc80192bd6  (3,289 QA "official test set",
+    GT withheld; videos at original resolution only)
+Official code (MIT): github.com/Paulineli/QuantiPhy @ aa8daa7a5736ce3514ed985189ad27ef4a2e6e68
+  * model_run_example/run_API_results.py (sha256 53f5d8c7...): SYSTEM_PROMPT, build_context_prefix,
+    zero-shot v3 user text, EXACT_NUMBER_WITH_UNIT_RE / num_re / parse_number  -> ported verbatim below
+  * evaluator.py (sha256 98c741f5...): MRA over C = {0.1..0.9, 0.95}, category = inference_type[0] +
+    video_type[1] (S2, D2, S3, D3), score = unweighted mean of the four category means; bg / obj
+    breakdowns (segmentation clips count as background X); invalid_percentage -> ported verbatim below
+
+Keys
+  * QuantiPhy       validation split (158 QA, 24 videos): the only split with public GT -> scored.
+  * QuantiPhy_test  official test split (3,289 QA, 568 videos): inference only. evaluate() writes the
+    official submission CSV (template columns, ids 1..3289 = parquet row order) and reports the
+    parse-failure rate; no score (GT withheld, the challenge portal is closed).
+
+Request (official zero-shot v3 = the paper's main setting):
+  system: SYSTEM_PROMPT (verbatim)
+  user:   [all frames of the 480p video] + "Given that {prior}. [Additionally, ... {depth_info}] {question}
+          \n\nPlease answer the question with numbers and units ONLY. No explanation needed."
+  depth_info is included only for 3D video types (video_type[1] == '3'), as in the official script.
+
+Frames. Official: every frame of the 480p video (cv2, no sampling), sent as JPEG images.
+  * VIDEO_LLM clients (CosmosReason*): the 480p mp4 is sent as one video message with
+    nframes = 2 * floor(n_frames / 2) (n_frames counted with decord, stored in the TSV). qwen-vl-utils
+    requires an even nframes <= n_frames, so odd-length clips lose one frame (linspace over all
+    frames); every other frame is sent, at the clip's own fps (timestamps intact). Setting nframes in
+    the message disables all model-level sampling keys (CosmosReason._get_video_processing_kwargs).
+    `max_pixels` is NOT set: 480p frames are below the qwen-vl-utils per-frame cap, so they are sent
+    at native 480p (rounded to multiples of 32); total_pixels is the qwen-vl-utils default.
+  * Other clients: every frame is decoded and sent as an image (identical to the official request).
+  The server-side Qwen3-VL video processor then caps T*H*W at its size.longest_edge (25,165,824 px for
+  the Cosmos3-Nano checkpoint), i.e. long clips are downscaled below 480p there (all frames kept).
+  scripts/check_quantiphy_frames.py proves the frame counts on the real files;
+  scripts/quantiphy_token_budget.py reports the resulting grid and prompt tokens with the real processor.
+
+Differences from the official code (PROTOCOL.md, QuantiPhy):
+  * Frames go as one video (Qwen3-VL merges frame pairs temporally; server-side pixel budget) instead
+    of N separate images.
+  * No re-ask on unparseable replies (official: up to 5 attempts). With greedy decoding (T=0, fixed
+    seed) the repeat would be identical; failures score 0 as in evaluator.py.
+  * QuantiPhy_test videos: our own 480p transcodes (ffmpeg, short side 480, every frame kept), because
+    the test repo ships only original-resolution videos; the validation repo ships the official 480p files.
+  * Headline keys use the official parser bit-for-bit, including its "^2" quirk ("980 cm/s^2" -> 2.0,
+    see _EXP_RE). Diagnostic `*_lenient` keys normalise the exponent first and convert the reply's unit
+    to the unit asked in the question ("0.25 m" for a question in cm -> 25); the official parser strips
+    units without conversion.
+"""
+
+import math
+import os
+import re
+import subprocess
+from collections import OrderedDict
+
+import numpy as np
+import pandas as pd
+import portalocker
+
+from vlmeval.smp import LMUDataRoot, dump, load
+from vlmeval.smp.file import get_intermediate_file_path
+from .video_base import VideoBaseDataset
+
+VAL_REPO = 'PaulineLi/QuantiPhy-validation'
+VAL_REVISION = '2d56ff31c22c12bf377b2c2092ff229d291fd830'
+TEST_REPO = 'PaulineLi/QuantiPhy'
+TEST_REVISION = 'ca0658a1ffba930b8170223db7a377cc80192bd6'
+OFFICIAL_CODE = 'github.com/Paulineli/QuantiPhy@aa8daa7a5736ce3514ed985189ad27ef4a2e6e68'
+TEMPLATE_URL = 'https://quantiphy.stanford.edu/competition/eval/quantiphy_submission_template.csv'
+TEMPLATE_SHA256 = '5f1e8367308ebaee6718929d74a175fecd6813a8d5862fc72a709d07d2328c18'
+SUBMISSION_COLUMNS = ['id', 'video_id', 'video_source', 'video_type', 'fps', 'inference_type', 'question',
+                      'ground_truth_prior', 'depth_info', 'parsed_value']
+
+SUBSETS = {'QuantiPhy': 'validation', 'QuantiPhy_test': 'test'}
+CATEGORIES = ['S2', 'D2', 'S3', 'D3']
+
+# ---------------------------------------------------------------------------------------------
+# Official prompt (run_API_results.py, zero_shot_prompt version 3 and build_context_prefix)
+# ---------------------------------------------------------------------------------------------
+SYSTEM_PROMPT = (
+    "You are an expert video analyst specializing in physics measurements.\n"
+    "Analyze the video frames carefully and provide ONLY the numerical answer with units. No explanation or reasoning needed.\n"  # noqa: E501
+    "Format your response as: [value] [unit]\n"
+    "Example: 2.5 cm\n"
+    "Be as accurate as possible with measurements and calculations. Please give me an estimated answer even if you are not sure."  # noqa: E501
+)
+POST_PROMPT = "\n\nPlease answer the question with numbers and units ONLY. No explanation needed."
+
+
+def _isna(x):
+    return x is None or (isinstance(x, float) and math.isnan(x)) or (not isinstance(x, str) and pd.isna(x))
+
+
+def build_context_prefix(prior=None, depth_info=None):
+    """Verbatim port of run_API_results.build_context_prefix."""
+    parts = []
+
+    if prior is not None and not pd.isna(prior):
+        prior_text = str(prior).strip()
+        if prior_text:
+            parts.append(f"Given that {prior_text}.")
+
+    if depth_info is not None and not pd.isna(depth_info):
+        depth_text = str(depth_info).strip()
+        if depth_text:
+            parts.append(
+                "Additionally, you have the following information about the distance between the objects in the video and the shooting camera: "  # noqa: E501
+                f"{depth_text}"
+            )
+
+    if not parts:
+        return ""
+
+    context = " ".join(parts).strip()
+    if context[-1] not in ".!?":
+        context += "."
+    return context + " "
+
+
+def build_user_text(question, prior, depth_info, video_type):
+    """Official zero-shot v3 user text; depth only for 3D video types (official include_depth)."""
+    video_type_value = str(video_type if not _isna(video_type) else '')
+    include_depth = len(video_type_value) >= 2 and video_type_value[1] == '3'
+    depth = depth_info if include_depth else None
+    return f"{build_context_prefix(prior, depth)}{question}{POST_PROMPT}"
+
+
+# ---------------------------------------------------------------------------------------------
+# Official answer parsing (run_API_results.py "2. Number Parsing"), verbatim
+# ---------------------------------------------------------------------------------------------
+num_re = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+EXACT_NUMBER_WITH_UNIT_RE = re.compile(
+    r"^[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?\s*(?:"
+    r"meters?|meter|m|kilometers?|kilometer|km|centimeters?|centimeter|cm|millimeters?|millimeter|mm|"
+    r"inches?|inch|in|feet|foot|ft|yards?|yard|yd|"
+    r"seconds?|second|s|minutes?|minute|min|hours?|hour|h|"
+    r"m/s|m/s²|m/s^2|m/s2|km/h|kph|mph|ft/s|cm/s|mm/s|"
+    r"m/s/s|m/s²|m/s^2|m/s2|ft/s²|ft/s^2|ft/s2|cm/s²|cm/s^2|cm/s2|mm/s²|mm/s^2|mm/s2|g"
+    r")?\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_number(text: str) -> float:
+    """Verbatim port of run_API_results.parse_number (absolute value, NaN on failure)."""
+    if not text or pd.isna(text):
+        return np.nan
+
+    original_text = str(text).strip()
+
+    # Step 1: Exact Match Validation
+    if EXACT_NUMBER_WITH_UNIT_RE.match(original_text):
+        num_match = num_re.search(original_text)
+        if num_match:
+            try:
+                value = float(num_match.group(0))
+                return abs(value)
+            except ValueError:
+                pass
+
+    # Step 2: Delimiter Search
+    text_to_parse = original_text
+    delimiters = ["Final Answer:", "Answer:", "=>", "=", ":", "is:", "The answer is:", "Example:"]
+
+    last_delimiter_pos = -1
+    last_delimiter = None
+    for delimiter in delimiters:
+        positions = [m.start() for m in re.finditer(re.escape(delimiter), text_to_parse, re.IGNORECASE)]
+        if positions:
+            last_pos = max(positions)
+            if last_pos > last_delimiter_pos:
+                last_delimiter_pos = last_pos
+                last_delimiter = delimiter
+
+    if last_delimiter_pos >= 0 and last_delimiter:
+        parts = text_to_parse.rsplit(last_delimiter, 1)
+        if len(parts) > 1:
+            text_to_parse = parts[-1].strip()
+
+    # Step 3: Unit Sanitization
+    text_cleaned = text_to_parse.lower()
+    units_to_remove = [
+        # size / distance
+        'kilometers', 'kilometer', 'km',
+        'meters', 'meter', 'm',
+        'centimeters', 'centimeter', 'cm',
+        'millimeters', 'millimeter', 'mm',
+        'inches', 'inch', 'in',
+        'feet', 'foot', 'ft',
+        'yards', 'yard', 'yd',
+        # time
+        'hours', 'hour', 'h',
+        'minutes', 'minute', 'min',
+        'seconds', 'second', 's',
+        # speed
+        'km/h', 'kph', 'mph', 'ft/s', 'm/s', 'cm/s', 'mm/s',
+        # acceleration
+        'm/s/s', 'm/s²', 'm/s^2', 'm/s2',
+        'ft/s²', 'ft/s^2', 'ft/s2',
+        'cm/s²', 'cm/s^2', 'cm/s2',
+        'mm/s²', 'mm/s^2', 'mm/s2',
+        'g',
+        # area (existing support retained)
+        'm^2', 'm²',
+    ]
+    for unit in units_to_remove:
+        text_cleaned = text_cleaned.replace(unit, '')
+
+    # Step 4: Heuristic Extraction
+    all_numbers = num_re.findall(text_cleaned)
+
+    if all_numbers:
+        try:
+            value = float(all_numbers[-1])
+            return abs(value)
+        except (ValueError, IndexError):
+            pass
+
+    all_numbers_original = num_re.findall(original_text)
+    if all_numbers_original:
+        try:
+            value = float(all_numbers_original[-1])
+            return abs(value)
+        except (ValueError, IndexError):
+            pass
+
+    # Step 5: Failure Handling
+    return np.nan
+
+
+# ---------------------------------------------------------------------------------------------
+# Official scoring (evaluator.py)
+# ---------------------------------------------------------------------------------------------
+MRA_THRESHOLDS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95]
+
+
+def mra(parsed_value, gt) -> float:
+    """evaluator.py row MRA: |abs(pred) - gt| / gt < 1 - theta over 10 thresholds; NaN if gt is NaN or 0."""
+    gt = pd.to_numeric(gt, errors='coerce')
+    if not (pd.notna(gt) and gt != 0):
+        return float('nan')
+    p = pd.to_numeric(parsed_value, errors='coerce')
+    p = abs(p) if pd.notna(p) else float('nan')
+    return sum(abs(p - gt) / gt < (1 - theta) for theta in MRA_THRESHOLDS) / 10
+
+
+def category_of(inference_type, video_type):
+    return inference_type[0] + video_type[1] if pd.notna(video_type) else None
+
+
+def invalid_count(parsed):
+    """evaluator.py invalid_percentage numerator: blank + non-numerical + zero parsed values."""
+    s = pd.Series(parsed, dtype=object)
+    num = pd.to_numeric(s, errors='coerce')
+    return int(s.isna().sum() + (s.notna() & num.isna()).sum() + (num == 0).sum())
+
+
+def _four_cat_mean(df, col):
+    m = {c: df.loc[df['category'] == c, col].mean() for c in CATEGORIES if (df['category'] == c).any()}
+    return (sum(m[c] for c in CATEGORIES) / 4) if len(m) == 4 else None, m
+
+
+def score_frame(df: pd.DataFrame, parsed_col='parsed_value', gt_col='answer', mra_col='mra'):
+    """Per-row MRA + official aggregates (fractions in [0, 1], as evaluator.py)."""
+    df = df.copy()
+    if 'video_source' in df.columns:  # official: segmentation clips count as plain background
+        mask = df['video_source'].isin(['segmentation', 'segmentaion'])
+        df.loc[mask, 'video_type'] = df.loc[mask, 'video_type'].apply(
+            lambda x: x[:-1] + 'X' if pd.notna(x) and len(x) > 0 else x)
+    df['category'] = [category_of(i, v) for i, v in zip(df['inference_type'], df['video_type'])]
+    df[mra_col] = [mra(p, g) for p, g in zip(df[parsed_col], df[gt_col])]
+    avg, per_cat = _four_cat_mean(df, mra_col)
+    out = OrderedDict(mra_average=avg)
+    for c in CATEGORIES:
+        out[f'mra_{c}'] = per_cat.get(c)
+    df['bg'] = df['video_type'].apply(lambda x: x[-1] if pd.notna(x) and len(x) > 0 else None)
+    df['obj'] = df['video_type'].apply(lambda x: {'S': 'single', 'M': 'multiple'}.get(x[2]) if pd.notna(x)
+                                       and len(x) > 2 else None)
+    for key, col in (('bg', 'bg'), ('obj', 'obj')):
+        for v in sorted(df[col].dropna().unique()):
+            out[f'mra_{key}_{v}'] = _four_cat_mean(df[df[col] == v], mra_col)[0]
+    out['invalid_percentage'] = invalid_count(df[parsed_col]) / len(df) * 100 if len(df) else 0
+    return df, out
+
+
+# ---------------------------------------------------------------------------------------------
+# Diagnostic unit conversion (not part of the official protocol)
+# ---------------------------------------------------------------------------------------------
+_LEN = {'km': 1000.0, 'm': 1.0, 'cm': 0.01, 'mm': 0.001, 'in': 0.0254, 'ft': 0.3048, 'yd': 0.9144}
+_UNIT_ALIASES = [
+    # (regex, canonical, dimension); longest first
+    (r'km\s*/\s*h(?:r|our)?|kph|kilometers?\s+per\s+hour', 'km/h', 'vel'),
+    (r'mph|miles?\s+per\s+hour', 'mph', 'vel'),
+    (r'(?:mm|cm|m|ft)\s*/\s*s(?:ec)?\s*(?:\^\s*2|²|2|/\s*s)|(?:milli|centi)?met(?:er|re)s?\s+per\s+second\s+squared',
+     'acc', 'acc'),
+    (r'(?:mm|cm|m|ft)\s*/\s*s(?:ec)?|(?:milli|centi)?met(?:er|re)s?\s+per\s+second', 'vel', 'vel'),
+    (r'kilomet(?:er|re)s?|km', 'km', 'len'),
+    (r'centimet(?:er|re)s?|cm', 'cm', 'len'),
+    (r'millimet(?:er|re)s?|mm', 'mm', 'len'),
+    (r'met(?:er|re)s?|m', 'm', 'len'),
+    (r'inch(?:es)?|in', 'in', 'len'),
+    (r'feet|foot|ft', 'ft', 'len'),
+    (r'yards?|yd', 'yd', 'len'),
+]
+_PREFIX_SCALE = {'mm': 0.001, 'cm': 0.01, 'm': 1.0, 'ft': 0.3048, 'milli': 0.001, 'centi': 0.01}
+
+
+def _unit_scale(unit_text):
+    """unit text -> (dimension, SI scale) or None."""
+    u = unit_text.strip().lower()
+    for pat, canon, dim in _UNIT_ALIASES:
+        if re.fullmatch(pat, u):
+            if dim == 'len':
+                return dim, _LEN[canon]
+            if canon == 'km/h':
+                return dim, 1000.0 / 3600.0
+            if canon == 'mph':
+                return dim, 1609.344 / 3600.0
+            head = re.match(r'(mm|cm|ft|m)\b|(milli|centi)', u)
+            key = (head.group(1) or head.group(2)) if head else 'm'
+            return dim, _PREFIX_SCALE.get(key, 1.0)
+    return None
+
+
+_UNIT_TOKEN = '|'.join(p for p, _, _ in _UNIT_ALIASES)
+_Q_UNIT_RE = re.compile(r'\b(?:in|\()\s*(' + _UNIT_TOKEN + r')\s*\)?\s*[?.]?\s*$', re.IGNORECASE)
+_A_UNIT_RE = re.compile(r'([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(' + _UNIT_TOKEN + r')(?![a-z])', re.IGNORECASE)
+
+
+def question_unit(question):
+    m = _Q_UNIT_RE.search(str(question).strip())
+    return _unit_scale(m.group(1)) if m else None
+
+
+# "/s^2", "/s2", "/sec^2" -> "/s²". The official EXACT_NUMBER_WITH_UNIT_RE has an unescaped "^" in
+# "m/s^2" (never matches) and its unit stripping removes "m"/"s" before "m/s^2", so the exponent "2"
+# becomes the last number: "980 cm/s^2" -> 2.0 officially. "²" is not a \d digit, so it is harmless.
+_EXP_RE = re.compile(r'(/\s*s(?:ec)?)\s*(?:\^\s*2|2)(?![\d.])', re.IGNORECASE)
+
+
+def lenient_value(prediction, question):
+    """Diagnostic parse: official parse_number after normalising the acceleration exponent ("^2" -> "²"),
+    then rescaled to the question's unit when the unit written right after that number differs."""
+    if _isna(prediction):
+        return parse_number(prediction)
+    text = _EXP_RE.sub(r'\1²', str(prediction))
+    v = parse_number(text)
+    if not isinstance(v, float) or math.isnan(v):
+        return v
+    target = question_unit(question)
+    if target is None:
+        return v
+    for m in reversed(list(_A_UNIT_RE.finditer(text))):
+        try:
+            if abs(float(m.group(1))) != v:
+                continue
+        except ValueError:
+            continue
+        src = _unit_scale(m.group(2))
+        if src is None or src[0] != target[0]:
+            return v
+        return v * src[1] / target[1]
+    return v
+
+
+# ---------------------------------------------------------------------------------------------
+# Dataset
+# ---------------------------------------------------------------------------------------------
+def quantiphy_root():
+    return os.path.join(LMUDataRoot(), 'QuantiPhy')
+
+
+def _snapshot(repo, revision, local_dir, patterns=None):
+    from huggingface_hub import snapshot_download
+    snapshot_download(repo, repo_type='dataset', revision=revision, local_dir=local_dir, allow_patterns=patterns)
+
+
+def _video_index(video_dir):
+    """video_id -> file name; tolerates the stray leading space in the validation repo
+    ('validation_videos/ captured_0041x.mp4')."""
+    out = {}
+    for f in os.listdir(video_dir):
+        if f.endswith('.mp4'):
+            out[f.strip()[:-4]] = f
+    return out
+
+
+def _n_frames(path):
+    import decord
+    return len(decord.VideoReader(path))
+
+
+def _transcode_480p(src, dst):
+    """Short side -> 480 (even other side), every frame kept at the source rate, no audio.
+    The scale expression is evaluated by ffmpeg after its autorotation, so rotated phone clips also end
+    with short side 480. (ffmpeg 4.4 here: -vsync passthrough; newer releases call it -fps_mode.)"""
+    import decord
+    vr = decord.VideoReader(src)
+    scale = "scale='if(gte(iw,ih),-2,480)':'if(gte(iw,ih),480,-2)'"
+    tmp = dst + '.tmp.mp4'
+    cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-i', src, '-vf', scale, '-vsync', 'passthrough', '-an',
+           '-c:v', 'libx264', '-crf', '18', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+           tmp]
+    subprocess.run(cmd, check=True)
+    n_src, n_dst = len(vr), _n_frames(tmp)
+    if n_src != n_dst:
+        os.remove(tmp)
+        raise RuntimeError(f'{src}: 480p transcode has {n_dst} frames, source {n_src}')
+    os.replace(tmp, dst)
+
+
+class QuantiPhy(VideoBaseDataset):
+    # 'Video-VQA' is not in CosmosReason.use_custom_prompt's exclusion list, but VIDEO datasets always
+    # use their own build_prompt in inference_video.py; the type only matters for DATASET_TYPE lookups.
+    TYPE = 'Video-VQA'
+    MODALITY = 'VIDEO'
+
+    def __init__(self, dataset='QuantiPhy', pack=False, nframe=0, fps=-1, **kwargs):
+        if dataset not in SUBSETS:
+            raise ValueError(f'Unknown QuantiPhy key {dataset}; choose from {list(SUBSETS)}')
+        if (nframe or 0) > 0 or (fps is not None and fps > 0):
+            raise ValueError(f'{dataset}: the official protocol sends every frame; nframe/fps must not be set')
+        self.split = SUBSETS[dataset]
+        super().__init__(dataset=dataset, pack=pack, nframe=0, fps=-1)
+
+    @classmethod
+    def supported_datasets(cls):
+        return list(SUBSETS)
+
+    # -- data -------------------------------------------------------------------------------
+    def prepare_dataset(self, dataset):
+        root = quantiphy_root()
+        os.makedirs(root, exist_ok=True)
+        tsv = os.path.join(LMUDataRoot(), f'{dataset}.tsv')
+        with portalocker.Lock(os.path.join(root, '.prepare.lock'), 'w', timeout=7200):
+            if self.split == 'validation':
+                src = os.path.join(root, 'validation')
+                csv = os.path.join(src, 'validation_dataset.csv')
+                vdir = os.path.join(src, 'validation_videos')
+                if not (os.path.exists(csv) and os.path.isdir(vdir)):
+                    _snapshot(VAL_REPO, VAL_REVISION, src)
+                video_root = vdir
+            else:
+                src = os.path.join(root, 'test')
+                pq = os.path.join(src, 'test_dataset.parquet')
+                if not os.path.exists(pq):
+                    _snapshot(TEST_REPO, TEST_REVISION, src)
+                video_root = os.path.join(root, 'test_480p')
+            if not os.path.exists(tsv):
+                out = self._build_tsv(root, src, video_root)
+                tmp = tsv + '.tmp.tsv'
+                out.to_csv(tmp, sep='\t', index=False)
+                os.replace(tmp, tsv)
+        return dict(root=video_root, data_file=tsv)
+
+    def _build_tsv(self, root, src, video_root):
+        if self.split == 'validation':
+            df = pd.read_csv(os.path.join(src, 'validation_dataset.csv'), index_col=0)
+            ids = df.index.astype(int)
+            gt = df['ground_truth_posterior'].astype(float)
+            prior = df['ground_truth_prior']
+            vidx = _video_index(video_root)
+        else:
+            df = pd.read_parquet(os.path.join(src, 'test_dataset.parquet'))
+            ids = np.arange(1, len(df) + 1)  # submission template ids = parquet row order
+            gt = pd.Series([np.nan] * len(df))
+            prior = df['prior']
+            os.makedirs(video_root, exist_ok=True)
+            srcidx = _video_index(src)
+            for vid in sorted(set(df['video_id'])):
+                dst = os.path.join(video_root, f'{vid}.mp4')
+                if not os.path.exists(dst):
+                    _transcode_480p(os.path.join(src, srcidx[vid]), dst)
+            vidx = _video_index(video_root)
+        missing = sorted(set(df['video_id']) - set(vidx))
+        if missing:
+            raise RuntimeError(f'QuantiPhy {self.split}: {len(missing)} videos missing, e.g. {missing[:3]}')
+        nfr = {v: _n_frames(os.path.join(video_root, vidx[v])) for v in sorted(set(df['video_id']))}
+        return pd.DataFrame({
+            'index': ids,
+            'video_id': df['video_id'].values,
+            'video_source': df['video_source'].values,
+            'video_type': df['video_type'].values,
+            'fps': df['fps'].values,
+            'inference_type': df['inference_type'].values,
+            'question': df['question'].values,
+            'prior': prior.values,
+            'depth_info': df['depth_info'].values,
+            'answer': gt.values,
+            'video': [vidx[v] for v in df['video_id']],
+            'n_frames': [nfr[v] for v in df['video_id']],
+        })
+
+    def video_path(self, video):
+        return os.path.join(self.data_root, video)
+
+    def save_video_frames(self, video, n_frames=None):
+        """Every frame as JPEG (non-VIDEO_LLM path; the official request sends all frames)."""
+        import decord
+        from PIL import Image
+
+        stem = os.path.splitext(video.strip())[0]
+        frame_dir = os.path.join(self.frame_root, stem)
+        os.makedirs(frame_dir, exist_ok=True)
+        lock_path = os.path.join(self.frame_root, stem + '.lock')
+        with portalocker.Lock(lock_path, 'w', timeout=600):
+            vr = decord.VideoReader(self.video_path(video))
+            n = len(vr)
+            paths = [os.path.join(frame_dir, f'frame-{i + 1}-of-{n}.jpg') for i in range(n)]
+            for i, p in enumerate(paths):
+                if not os.path.exists(p):
+                    tmp = p + '.tmp.jpg'
+                    Image.fromarray(vr[i].asnumpy()).save(tmp, quality=95)
+                    os.replace(tmp, p)
+        return paths
+
+    @staticmethod
+    def video_nframes(n_frames):
+        """Frames requested from qwen-vl-utils: the largest even count <= n_frames."""
+        return int(n_frames) - int(n_frames) % 2
+
+    def build_prompt(self, line, video_llm):
+        if isinstance(line, int):
+            assert line < len(self)
+            line = self.data.iloc[line]
+        text = build_user_text(line['question'], line['prior'], line['depth_info'], line['video_type'])
+        # role='system' -> BaseAPI.preprocess_message_with_role moves it into the system prompt.
+        msgs = [dict(role='system', type='text', value=SYSTEM_PROMPT)]
+        if video_llm:
+            msgs.append(dict(type='video', value=self.video_path(line['video']),
+                             nframes=self.video_nframes(line['n_frames'])))
+        else:
+            msgs.extend(dict(type='image', value=p) for p in self.save_video_frames(line['video']))
+        msgs.append(dict(type='text', value=text))
+        return msgs
+
+    # -- scoring ----------------------------------------------------------------------------
+    @staticmethod
+    def official_frame(data):
+        """Prediction table -> official evaluator.py input (first column = id, parsed_value)."""
+        return pd.DataFrame({
+            'id': data['index'].astype(int).values,
+            'video_id': data['video_id'].values,
+            'video_source': data['video_source'].values,
+            'video_type': data['video_type'].values,
+            'fps': data['fps'].values,
+            'inference_type': data['inference_type'].values,
+            'question': data['question'].values,
+            'ground_truth_prior': data['prior'].values,
+            'depth_info': data['depth_info'].values,
+            'ground_truth_posterior': pd.to_numeric(data['answer'], errors='coerce').values,
+            'parsed_value': [parse_number(p) for p in data['prediction']],
+        })
+
+    def evaluate(self, eval_file, **judge_kwargs):
+        data = load(eval_file)
+        data['prediction'] = [None if _isna(p) else str(p) for p in data['prediction']]
+        off = self.official_frame(data)
+        if self.split == 'test':
+            sub_file = get_intermediate_file_path(eval_file, '_quantiphy_submission', 'csv')
+            off[SUBMISSION_COLUMNS].to_csv(sub_file, index=False)
+            res = OrderedDict(n=len(off), invalid_percentage=invalid_count(off['parsed_value']) / len(off) * 100)
+            print(f'[{self.dataset_name}] GT withheld; submission CSV written to {sub_file}: {dict(res)}')
+            return res
+
+        off_file = get_intermediate_file_path(eval_file, '_quantiphy_official', 'csv')
+        off.to_csv(off_file, index=False)  # runnable with the official evaluator.py
+        scored, summ = score_frame(off, gt_col='ground_truth_posterior')
+        off['parsed_value_lenient'] = [lenient_value(p, q) for p, q in zip(data['prediction'], data['question'])]
+        scored_u, summ_u = score_frame(off, parsed_col='parsed_value_lenient', gt_col='ground_truth_posterior',
+                                       mra_col='mra_lenient')
+        scored['parsed_value_lenient'] = off['parsed_value_lenient'].values
+        scored['mra_lenient'] = scored_u['mra_lenient'].values
+        scored['prediction'] = data['prediction'].values
+        dump(scored, get_intermediate_file_path(eval_file, '_quantiphy_score', 'xlsx'))
+
+        def pct(x):
+            return None if x is None or (isinstance(x, float) and math.isnan(x)) else 100.0 * x
+
+        res = OrderedDict()
+        res['Overall'] = pct(summ['mra_average'])
+        for c in CATEGORIES:
+            res[c] = pct(summ[f'mra_{c}'])
+        for k, v in summ.items():
+            if k.startswith('mra_bg_') or k.startswith('mra_obj_'):
+                res[k[4:]] = pct(v)
+        res['invalid_percentage'] = summ['invalid_percentage']
+        res['n'] = len(off)
+        res['n_unparsed'] = int(pd.isna(off['parsed_value']).sum())
+        res['Overall_lenient'] = pct(summ_u['mra_average'])
+        for c in CATEGORIES:
+            res[f'{c}_lenient'] = pct(summ_u[f'mra_{c}'])
+        res['n_lenient_changed'] = int(((off['parsed_value_lenient'] != off['parsed_value'])
+                                       & off['parsed_value'].notna()).sum())
+        table = pd.DataFrame([dict(metric=k, value=v) for k, v in res.items()])
+        table.to_csv(get_intermediate_file_path(eval_file, '_acc', 'csv'), index=False)
+        print(f'[{self.dataset_name}] (official: {OFFICIAL_CODE})\n'
+              + table.to_string(index=False, float_format=lambda x: f'{x:.2f}'))
+        return res
