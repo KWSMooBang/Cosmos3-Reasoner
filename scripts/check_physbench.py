@@ -113,7 +113,7 @@ def main(argv=None) -> None:
                    int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
         cap.release()
     nf = np.array([m[0] for m in meta.values()])
-    dec = pb.video_frame_counts(ds.data_root, vids)  # decord counts (qwen-vl-utils reader)
+    dec = {v: e["frames"] for v, e in pb.ensure_media(ds.data_root, vids).items()}  # decord counts (media manifest)
     short = sorted((v for v in vids if dec[v] < 8), key=lambda v: dec[v])
     print(f"videos: {len(vids)}; frames min/median/max {nf.min()}/{int(np.median(nf))}/{nf.max()}; "
           f"decord <8 frames: {len(short)} {[(v, dec[v], pb.frame_budget(dec[v])) for v in short]}; sizes {Counter((m[2], m[3]) for m in meta.values()).most_common(5)}")
