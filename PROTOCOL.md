@@ -172,11 +172,18 @@ frame budget (questions about objects not visible in the N frames were removed b
 - **Frames.** The official N-frame videos are pre-sampled by the authors (hierarchical uniform
   sampling of the all-frame video: 64 ⊂ all, 32 ⊂ 64, 16 ⊂ 32, indices in
   `metadata/sampled_video_frame_idx.json`) and shipped as `video.zip:<N>_frame/<scene>.mp4` with
-  exactly N frames. `ReVSI.build_prompt` sends that mp4 as a video message **without sampling
-  keys**; the data config sets `video_sampling.nframes = N`, and qwen-vl-utils'
-  `linspace(0, N-1, N)` over an N-frame video is the identity, so every official frame is sent once, in
-  order (fps sent = the mp4's fps, i.e. the frames' original timestamps). Proof on the real files:
-  `scripts/check_revsi_frames.py` (see below); synthetic: `scripts/check_video_sampling.py`.
+  exactly N frames. `ReVSI.build_prompt` sends that mp4 as a video message that **pins
+  `nframes=N`**, so the budget holds for any model config and for direct `run.py` use. By the
+  §5 rule, a sampling key in the message makes `CosmosReason*` ignore **all** model-level sampling
+  attributes (nframes/fps/max_pixels/total_pixels/min_pixels/max_frames) for ReVSI. Resolution
+  therefore uses the qwen-vl-utils defaults, which keep ReVSI's 640x480 frames at native size; a
+  model-level `max_pixels` etc. would not apply here (`check_video_sampling.py` fails if a model
+  layer sets one for ReVSI). The data config still carries `video_sampling.nframes = N`, which
+  must equal the pinned key. qwen-vl-utils' `linspace(0, N-1, N)` over an N-frame video is the
+  identity, so every official frame is sent once, in order (fps sent = the mp4's fps, i.e. the
+  frames' original timestamps). Proof on the real files: `scripts/check_revsi_frames.py` (also with no
+  `video_sampling` and with conflicting model-level nframes=8 / fps=2 / max_frames=4: still N frames
+  in order); synthetic: `scripts/check_video_sampling.py`.
   Evidence (2026-11-25, `cosmos3_nano_nothink` layer, endpoint stubbed): for sampled scenes of every key the
   request carries exactly N frames (64/32/16) at native size (640x480 / 480x640), request frame i ==
   mp4 frame i for all i, `mm_processor_kwargs={do_sample_frames: false, fps: <mp4 fps>}`; the image path
@@ -210,6 +217,9 @@ frame budget (questions about objects not visible in the N frames were removed b
   model defaults apply (greedy, `max_tokens` 8192/16384) and frames are re-encoded by the client at
   qwen-vl-utils default resolution limits (ReVSI frames are 640x480 / 480x640 / 360x640, below the
   786,432 px per-frame cap, so native resolution). `all_frame` (2 fps / variable length) is not provided.
+- **Data integrity:** the extraction marker is trusted only if every mp4 the subset references exists
+  and is non-empty; otherwise `video.zip` is checked against its sha256 (deleted and re-downloaded
+  on mismatch) and the subset is re-extracted. Frame JPEGs (image path) are written atomically.
 - **Tests:** `scripts/test_revsi_scoring.py` (offline: GT -> 100 for all subsets, garbage -> 0, random
   -> chance, 20 hand-made parse cases, MRA vs upstream formula).
 

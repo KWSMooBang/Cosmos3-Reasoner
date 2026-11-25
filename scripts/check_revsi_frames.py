@@ -4,12 +4,14 @@
 For a ReVSI key (default ReVSI_64frame, N = 64):
   1. Builds the dataset exactly as run.py does (data config -> vlmeval ReVSI) from $LMUData.
   2. For --scenes sampled questions (distinct scenes, seed 0) takes the message built by
-     ReVSI.build_prompt(video_llm=True) and checks that it is a video message with no sampling
-     keys pointing at <N>_frame/<scene>.mp4, and that this mp4 has exactly N frames.
-  3. Builds the model from the merged run_suite config (endpoint checks stubbed) and runs the
-     client preprocessing (prepare_inputs -> qwen-vl-utils -> base64 mp4), capturing the frame
-     tensor that would be sent. Checks: T == N, and frame i of the request is frame i of the
-     official mp4 (nearest-neighbour match over all N decoded frames, on 32x24 thumbnails).
+     ReVSI.build_prompt(video_llm=True) and checks that it is a video message pointing at
+     <N>_frame/<scene>.mp4 whose only sampling key is nframes=N, and that this mp4 has exactly N frames.
+  3. Runs the client preprocessing (prepare_inputs -> qwen-vl-utils -> base64 mp4; endpoint checks
+     stubbed) with three model configs: the merged run_suite config; the bare model layer (no
+     data-layer video_sampling, i.e. direct run.py use); and a conflicting model-level setting
+     (nframes=8 / fps=2.0 / max_frames=4). Captures the frame tensor that would be sent and checks
+     T == N and that frame i of the request is frame i of the official mp4 (nearest-neighbour match
+     over all N decoded frames, on 32x24 thumbnails) for every config.
   4. Provenance (informational): for --provenance scenes, decodes the all-frame video from video.zip
      and reports whether frame i of the N-frame mp4 is all-frame frame
      sampled_video_frame_idx[scene]['<N>-frame'][i] (nearest neighbour within +-5 frames). Exact for
@@ -91,8 +93,15 @@ def main(argv=None) -> None:
     print("question types:", ds.data["question_type"].value_counts().to_dict())
 
     klass = getattr(A, mconf.pop("class"))
-    mconf.update(use_video_cache=False, api_base="http://offline.invalid/v1/chat/completions")
-    model = klass(**mconf)
+    base = dict(mconf, use_video_cache=False, api_base="http://offline.invalid/v1/chat/completions")
+    bare = {k: v for k, v in base.items() if k not in rs.VIDEO_SAMPLING_KEYS}
+    models = {
+        "run_suite config": klass(**base),
+        "bare model layer (no video_sampling)": klass(**bare),
+        "conflicting model-level nframes=8": klass(**dict(bare, nframes=8)),
+        "conflicting model-level fps=2.0": klass(**dict(bare, fps=2.0)),
+        "conflicting model-level max_frames=4": klass(**dict(bare, max_frames=4)),
+    }
 
     fails = []
     rng = np.random.default_rng(0)
@@ -101,26 +110,29 @@ def main(argv=None) -> None:
     for _, line in picks.iterrows():
         msg = ds.build_prompt(line, video_llm=True)
         vids = [m for m in msg if m["type"] == "video"]
-        assert len(vids) == 1 and not (set(vids[0]) & SAMPLING_KEYS), vids
+        assert len(vids) == 1 and {k for k in vids[0] if k in SAMPLING_KEYS} == {"nframes"} \
+            and vids[0]["nframes"] == n, vids
         path = vids[0]["value"]
         official = decode_all(path)
-        captured.clear()
-        _, vkw = model.prepare_inputs(msg)
-        (tensor, sent_fps), = captured
-        sent = tensor.float().numpy()
-        if sent.max() <= 1.0 + 1e-6:
-            sent = sent * 255.0
-        sent = np.clip(sent, 0, 255).astype(np.uint8).transpose(0, 2, 3, 1)  # T,H,W,C
-        a, b = thumbs(sent), thumbs(official)
-        d = ((a[:, None, :] - b[None, :, :]) ** 2).mean(-1)
-        match = d.argmin(1)
-        ok = len(official) == n and sent.shape[0] == n and np.array_equal(match, np.arange(n))
-        print(f"[{'OK' if ok else 'FAIL'}] {os.path.relpath(path, ds.data_root)}: mp4 has {len(official)} frames "
-              f"({official.shape[2]}x{official.shape[1]}), request has {sent.shape[0]} frames "
-              f"({sent.shape[2]}x{sent.shape[1]}), frame i of request == frame i of mp4 for "
-              f"{int((match == np.arange(len(match))).sum())}/{len(match)}; mm_processor_kwargs={vkw}")
-        if not ok:
-            fails.append(path)
+        b = thumbs(official)
+        for mname, model in models.items():
+            captured.clear()
+            _, vkw = model.prepare_inputs(msg)
+            (tensor, sent_fps), = captured
+            sent = tensor.float().numpy()
+            if sent.max() <= 1.0 + 1e-6:
+                sent = sent * 255.0
+            sent = np.clip(sent, 0, 255).astype(np.uint8).transpose(0, 2, 3, 1)  # T,H,W,C
+            a = thumbs(sent)
+            d = ((a[:, None, :] - b[None, :, :]) ** 2).mean(-1)
+            match = d.argmin(1)
+            ok = len(official) == n and sent.shape[0] == n and np.array_equal(match, np.arange(n))
+            print(f"[{'OK' if ok else 'FAIL'}] {os.path.relpath(path, ds.data_root)} [{mname}]: mp4 has "
+                  f"{len(official)} frames ({official.shape[2]}x{official.shape[1]}), request has {sent.shape[0]} "
+                  f"frames ({sent.shape[2]}x{sent.shape[1]}), frame i of request == frame i of mp4 for "
+                  f"{int((match == np.arange(len(match))).sum())}/{len(match)}; mm_processor_kwargs={vkw}")
+            if not ok:
+                fails.append(f"{path} [{mname}]")
 
     # Provenance vs. sampled_video_frame_idx.json (frames of the all-frame video).
     root = Path(ds.data_root).parent

@@ -7,7 +7,10 @@ For every video bench in configs/suites/*.yaml (data config with `video_sampling
    `dict(type='video', ...)` it builds. `CosmosReason._get_video_processing_kwargs` ignores ALL
    model-level sampling attributes as soon as a video message carries ANY sampling key
    (nframes/fps/total_pixels/max_pixels/min_pixels/max_frames), so such a key would silently
-   override our config. Fails if one is found. Benches that never build a video message (frames
+   override our config. A bench may pin keys in the message only if its data config's
+   `video_sampling` declares exactly those keys and no other model-level sampling key would be
+   dropped (ReVSI pins nframes=N); the dynamic check then also sets a conflicting model-level value
+   and verifies the pinned one wins. Any other sampling key in a video message fails. Benches that never build a video message (frames
    are sent as images, e.g. MMSIVideoBench) are sampled by the *dataset* (`nframe`/`fps`).
 2. Dynamic, video-message benches: build the model from the merged run_suite config (endpoint
    checks stubbed), feed it a synthetic 40 s / 30 fps mp4 exactly as the dataset does
@@ -118,19 +121,42 @@ def main(argv=None) -> None:
         dsconf = next(iter(cfg["data"].values()))
         cls = getattr(D, dsconf["class"])
         vkeys = video_message_keys(cls)
-        bad = [k & SAMPLING_KEYS for k in (vkeys or []) if k & (SAMPLING_KEYS | {"**"})]
         name = it["bench"]
-        if bad:
-            failures.append(f"{name}: {cls.__name__}.build_prompt puts sampling keys {bad} into the video "
-                            "message -> model-level video_sampling would be ignored")
+        pinned, want = set(), {}
+        for k in (vkeys or []):
+            if "**" in k:
+                failures.append(f"{name}: {cls.__name__}.build_prompt builds a video message with **kwargs; "
+                                "cannot verify which sampling keys it carries")
+            pinned |= k & SAMPLING_KEYS
+        vs = dconf.get("video_sampling", {})
+        if pinned:
+            # The dataset pins sampling keys in the message -> the client ignores ALL model-level
+            # sampling attributes. Allowed only if the data config's video_sampling declares exactly
+            # those keys (same values by convention; real values are proven by a bench-specific check,
+            # e.g. scripts/check_revsi_frames.py) and no other model-level key would be silently dropped.
+            if pinned != set(vs):
+                failures.append(f"{name}: build_prompt pins {sorted(pinned)} but data video_sampling declares "
+                                f"{sorted(vs)}")
+            dropped = {k: mconf[k] for k in rs.VIDEO_SAMPLING_KEYS
+                       if mconf.get(k) is not None and (k not in pinned or mconf[k] != vs.get(k))}
+            if dropped:
+                failures.append(f"{name}: model-level {dropped} would be ignored (video message pins {sorted(pinned)})")
         if vkeys:  # raw video handed to the client
             want = {k: mconf[k] for k in rs.VIDEO_SAMPLING_KEYS if mconf.get(k) is not None}
             klass = getattr(A, mconf.pop("class"))
             mconf.update(use_video_cache=False, api_base="http://offline.invalid/v1/chat/completions")
+            msg = dict(type="video", value=str(video))
+            if pinned:
+                want = {k: vs[k] for k in pinned}
+                msg.update(want)
+                # conflicting model-level values must lose against the pinned message keys
+                if "nframes" in pinned:
+                    mconf.update(nframes=7, fps=None)
+                else:
+                    mconf.update(fps=0.25, nframes=None)
             model = klass(**mconf)
             seen_tensors.clear()
-            msgs, vkw = model.prepare_inputs([dict(type="video", value=str(video)),
-                                              dict(type="text", value="How many objects?")])
+            msgs, vkw = model.prepare_inputs([msg, dict(type="text", value="How many objects?")])
             (shape, sent_fps), = seen_tensors
             nf = shape[0]
             if "nframes" in want:
@@ -138,7 +164,8 @@ def main(argv=None) -> None:
             else:  # qwen-vl-utils fps mode: round(duration * fps) to a multiple of 2, >= 4
                 expect = max(4, round(args.seconds * want["fps"] / 2) * 2)
             ok = nf == expect
-            print(f"[{'OK' if ok else 'FAIL'}] {name:20s} video msg keys={sorted(vkeys[0])} -> client sampling "
+            src = "pinned in message (model-level conflict ignored)" if pinned else "client sampling"
+            print(f"[{'OK' if ok else 'FAIL'}] {name:20s} video msg keys={sorted(vkeys[0])} -> {src} "
                   f"{want} -> {nf} frames sent (expected {expect}), frame {shape[2]}x{shape[3]}, "
                   f"mm_processor_kwargs={vkw}")
             if not ok:
