@@ -23,7 +23,12 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 ## 결정
 - 2026-11-25: 코드 작업은 L2 로. push·원격 생성은 사람 승인 후.
 - 2026-11-25: 서빙은 docker 가 아니라 native vLLM(.venv-vllm)으로 한다 (이 세션이 이미 docker 안에서 돌기 때문). docker 스크립트는 참고용으로만 둔다.
-  NVIDIA 고정 이미지와 vLLM 버전이 다를 수 있으니 그 차이를 PROTOCOL.md 에 기록한다. 1차 평가 대상은 Cosmos3-Nano(TP=2).
+  NVIDIA 고정 이미지와 vLLM 버전이 다를 수 있으니 그 차이를 PROTOCOL.md 에 기록한다. 1차 평가 대상은 Cosmos3-Nano.
+- 2026-11-25: Nano 는 MoT. understanding 경로 ≈8.8B(≈17.5GB bf16)만 있으면 reasoner 로 쓸 수 있음 → 4090 1장(TP=1) 시도.
+  나머지 ≈15GB 는 생성 전용(mlp_moe_gen, 다른 attention 세트, vae, sound_tokenizer). vLLM 이 und 만 로드하는지는 t002 가 확인.
+  KV 여유 ≈3–4GB(≈20k tokens) → max-model-len 과 프레임/해상도 상한을 낮춰야 함. 안 되면 TP=2.
+- 2026-11-25: 스모크 테스트는 GPU 0,1 만 사용 (사람 지시). harness launch.sh 는 GPU 를 스스로 고르므로
+  스모크는 CUDA_VISIBLE_DEVICES=0,1 로 직접 실행한다.
 
 ## GPU 예산
 - 미정 (스모크 ≈ 2 GPU × 1h). 전체 벤치 실행 전 사람과 정한다.
