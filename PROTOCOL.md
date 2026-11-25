@@ -152,7 +152,7 @@ client's qwen-vl-utils `nframes` sampling is also uniform linspace).
 | SpaceCastBench_CoT (default), SpaceCastBench (direct) | spatial (direct opt-in) | 1–8 images | – | official SpaceCast parser + exact set match, macro over 16 types | none | see "SpaceCast-Bench" below |
 | PhyX_mini_MC, PhyX_MC | physics | image | – | string-level (`valid_type=STR`) | none | – |
 | SeePhys | physics | image | – | LLM extraction + compare | **`gpt-4o-mini-2024-07-18`** (OpenAI, pinned snapshot) | – |
-| PhysBench (also _val) | physics | interleaved images + video | 8 uniform (pinned; 4–6 for 19 clips < 8 frames) | official prefix match (`pred.startswith(gt)`) | none (ignored) | official `test_frame = 8`; see "PhysBench" below |
+| PhysBench (also _val; _native opt-in) | physics | interleaved images + video; images capped at 6.9 MP (TP=1) | 8 uniform (pinned; 4–6 for 19 clips < 8 frames) | official prefix match (`pred.startswith(gt)`) | none (ignored) | official `test_frame = 8`; see "PhysBench" below |
 
 Judge policy: rule-based/exact matching wherever the dataset supports it (all MCQ benches,
 VSI/Spar NA questions, PhyX). The only LLM-judged bench is SeePhys (its evaluate() requires one;
@@ -337,12 +337,25 @@ Local class `vlmeval/dataset/physbench.py`; official scorer copied verbatim to
   (3,286 mp4) from HF, all sha256-pinned. Labels are public: the official repo's `eval/physbench/test_answer.json`
   (all 10,002 idx; answer, task/sub/ability type), which `eval/print_test_score.py` scores against; the README
   says this gives the EvalAI results. No server submission is needed. Stored under `$LMUData/PhysBench/`
-  (`hf/` zips + json 7.0 GB, extracted `image/` 3.5 GB, `video/` 3.6 GB); TSV `$LMUData/PhysBench.tsv` +
-  `.manifest.json`; decord frame counts are cached in `PhysBench/video_frames.json`.
-- **Keys.** `PhysBench` = all 10,002 items (test 9,802 + val 200). The paper (App. B.8), the leaderboard and
-  lmms-eval report the full set, val included. `PhysBench_val` = the 200 val items, scored against
-  `val_answer.json` as the official val path does. Its answers equal `test_answer.json`, but 14 rows have an older
-  task/ability taxonomy there.
+  (`hf/` zips + json 7.0 GB, extracted `image/` 3.5 GB, `video/` 3.6 GB, capped copies `image_maxpx6912000/`
+  0.3 GB); TSV `$LMUData/<key>.tsv` + `<key>.manifest.json`.
+- **Media integrity.** `PhysBench/media_manifest.json` records, per extracted file, the size and sha256 of the zip
+  member (hashed while extracting; the zip is sha256-pinned and zipfile checks each member's CRC), the file's
+  mtime, and the decord frame count per video. Every load stat-checks size + mtime of every needed file.
+  `PHYSBENCH_VERIFY_MEDIA=1` re-hashes all of them (~7 GB). A missing or changed file, or one with no entry,
+  is re-extracted from the zip and its entry rewritten, frame count included. The TSV manifest carries a digest of
+  (file, sha256, frame count) and of the images sent, so a repair that changes a frame count or a sent image
+  rebuilds the TSV. Frame counts and per-item frame budgets are TSV columns (`video_frames`, `video_nframes`).
+  Tested in `scripts/test_physbench_media.py`: a same-size corruption that keeps the original mtime survives the
+  stat check and is repaired with `PHYSBENCH_VERIFY_MEDIA=1`; a truncated video is repaired on a normal load
+  (sha256 and frame count as before, TSV unchanged); a changed frame count in the manifest rebuilds the TSV.
+- **Keys.** `PhysBench` = all 10,002 items (test 9,802 + val 200), with the TP=1 image cap (see "Image cap").
+  The paper (App. B.8), the leaderboard and lmms-eval report the full set, val included. `PhysBench_val` = the 200
+  val items, same cap, scored against `val_answer.json` as the official val path does. Its answers equal
+  `test_answer.json`, but 14 rows have an older task/ability taxonomy there; the val TSV uses the val taxonomy,
+  so TSV and score report agree. `PhysBench_native` = the 10,002 items at native image resolution (opt-in, TP=2 /
+  65536; commented line in `physics.yaml`). The cap is fixed by the key (`image_max_pixels` in the data config
+  must match, or the class refuses to load).
 - **Counts** (task_type / sub_type, from `test_answer.json`): property 2,578 (number 577, mass 293, color 299,
   attribute 1,409); relationships 2,138 (size 56, location 291, depth 285, distance 60, motion 1,446); scene
   2,283 (temperature 68, viewpoint 1,061, air 55, light 1,099); dynamics 3,003 (collision 663, throwing 421,
@@ -355,7 +368,7 @@ Local class `vlmeval/dataset/physbench.py`; official scorer copied verbatim to
   `file_name` entry, and the text between placeholders is kept as separate text parts, like the official GPT-4o client's
   `_replace_placeholders`. Layouts: `V T` 6,001, `I T` 2,090, `I T I T I T I T I T` 1,356 (four option images),
   `T I T I T I T` 483, … (`scripts/check_physbench.py` checks all 10,002 against the placeholders).
-  Images are sent at native resolution (§5). `TYPE='MCQ'`, so `CosmosReason*.use_custom_prompt` is False and this
+  Images are the original files (§5) except the capped ones (see "Image cap"). `TYPE='MCQ'`, so `CosmosReason*.use_custom_prompt` is False and this
   prompt is used. The official GPT/Gemini clients also add "The video is split to a series of images …" in front
   of the prompt, because they send frames as images. We do not add it: Cosmos receives a real video, and the
   official open-source interleaved models do not add it either.
@@ -374,22 +387,38 @@ Local class `vlmeval/dataset/physbench.py`; official scorer copied verbatim to
   change it. Content order is the same as the message. `mm_processor_kwargs = {do_sample_frames: false, fps}`.
   Videos: median 30 frames, 1024×1024 (1,919 clips), 1080×1920 (1,065), 720×1280 (195). Image-frame
   (non-VIDEO_LLM) clients get 8 linspace frames as images in the video's place.
-- **Tokens** (Cosmos3-Nano @ `45666784` processor: 32×32 px per token, image 65,536–16,777,216 px; video frames
+- **Tokens, native resolution** (`PhysBench_native`; Cosmos3-Nano @ `45666784` processor: 32×32 px per token, image 65,536–16,777,216 px; video frames
   resized by qwen-vl-utils to ≤ 768 tokens/frame, 2 frames per temporal patch → ≤ 3,072 tokens/video). Analytic
   per-item count equal to the HF processor's image/video pad tokens on all 77 checked items; chat template +
   video timestamps add 8–42 tokens. Prompt tokens over 10,002 items: mean 3,316, p50 2,954, p90 7,075,
   p99 11,909, **max 23,774**; image-only p99 15,684 / max 16,450; video p99 3,099 / max 3,159; interleaved max 23,774.
   352 items > 8,192, **9 items > 16,384** (idx 9 and 10: two 4032×3024 photos each, 11,844 tokens per photo, 23.8k in total; seven single
   images that hit the 16,384-token cap, ≈16.45k), 0 items > 32,768. Images reach 51.8 MP natively (the processor caps at 16.8 MP).
-  **Consequence:** at TP=1 / `max-model-len 16384` the 9 largest prompts are rejected and 352 items leave
-  < 8,192 output tokens (vLLM clamps `max_tokens`). Native resolution therefore needs **TP=2 / 65536** (largest
-  prompt + 16,384 think tokens = 40.2k). The fallback at TP=1 would be an image pixel cap, which the kit's image path
-  does not have (`img_size=-1` sends originals). The official protocol does not prescribe image resolution
-  (GPT-4o ran with `detail: low`; open models used their own processors).
+  At TP=1 / `max-model-len 16384` the 9 largest prompts would be rejected and 352 items would leave
+  < 8,192 output tokens (vLLM clamps `max_tokens`). Native resolution needs **TP=2 / 65536** (largest prompt +
+  16,384 think tokens = 40.2k).
+- **Image cap (deviation; L1 decision 2026-11-26: benches run one at a time on one GPU, TP=1 / 16384).** `PhysBench` and
+  `PhysBench_val` cap each image at **`image_max_pixels = 6,912,000` px (6,750 tokens)**. This is the largest cap whose
+  biggest prompt stays ≤ ~13.5k tokens (scan of the cap: 6,800 tokens gives 13,618, 6,750 gives 13,476). An image
+  whose native token count (processor limits) is ≤ 6,750 is sent as the **original file, unchanged**. A larger one is
+  sent as a copy resized once to the processor's own `smart_resize(factor 32, max_pixels=cap)` size (multiples of
+  32, so the server does not resize again; PIL BICUBIC, same format, JPEG quality 95, EXIF/ICC kept), stored in
+  `PhysBench/image_maxpx6912000/` with a manifest (source sha256, sizes, copy sha256). Affected: **359 of 10,002
+  items** (361 image slots, **218 unique images** of 10,354); 10,163 image slots stay originals; video is untouched (8
+  frames, ≤ 3,072 tokens). Capped key: prompt tokens mean 3,121, p99 7,077, **max 13,434 (13,476 with chat
+  template)**, 2 items > 8,192, 0 > 16,384. Output room at 16384 is therefore ≥ 2.9k tokens for every item
+  (≥ 8k for all but 2). That is enough for the nothink letter answer; `*_think` runs (16,384 max_tokens) get
+  clamped by vLLM on large prompts. HF processor pad-token counts equal the analytic count on 85 checked items,
+  including 8 capped items. Check: `scripts/check_physbench.py` (capped) / `--key PhysBench_native`. Justification:
+  the official protocol does not fix the image resolution. The official GPT-4o run sent every image with
+  `detail: low` (512 px), and the open models used their own processors' limits. A 6.9 MP cap is far above both.
 - **Scoring (headline, official bit-for-bit).** `answer_true = pred == gt or pred.startswith(gt)` on the raw
   prediction string. For `*_think` that is the text after `</think>`. No letter extraction, so `(B)` and
   `The answer is B` count as wrong. `Overall = correct / scored items`. Per task_type / sub_type / ability_type
-  accuracy = correct / total of that type. `evaluate()` computes this per row and also runs the verbatim official
+  accuracy = correct / answered items of that type. A missing prediction gets the official null handling: wrong in `Overall`,
+  skipped in every per-type total (`n_unanswered`), and never correct, even on an empty-label row. "Missing"
+  means None/NaN. run.py's xlsx turns an empty reply into an empty cell, so an empty reply is also null (the
+  official resume logic also treats `''` as not answered). `evaluate()` computes this per row and also runs the verbatim official
   `calculate_accuracy` on the same predictions, asserting equality. Label quirks are kept for comparability:
   **17 items have an empty label**, and every prediction `startswith('')`, so they always count as correct
   (+0.17 points for any model). 7 labels are not a single A–D letter: `'d'` (1104), `' D'` (1401), `'1'` (1594),
@@ -401,13 +430,23 @@ Local class `vlmeval/dataset/physbench.py`; official scorer copied verbatim to
 - **Diagnostics (not the headline).** `lmms_overall` / `lmms_<domain>` = lmms-eval rule (first character in
   ABCD, case-insensitive exact match; the 17 empty-label rows are dropped, n = 9,985; GT-as-prediction gives 99.94
   because of the 7 odd labels). `Overall_lenient` = official rule, plus the kit's `can_match_option` letter when the
-  official rule fails. `Overall_lenient − Overall` = points lost to answer format.
+  official rule fails. **`format_gap` = `Overall_lenient − Overall`** = points the headline loses to answer format only
+  (e.g. `<answer>B. …</answer>`, `(B)`, `The answer is B`). It is reported next to `n_lenient_only` (such rows),
+  `n_letter_first` (replies starting with a letter) and `n_answer_tag` (replies starting with `<answer>`).
+  `run_suite.py` writes `score_lenient` and `format_gap` into `score.json`, and `summary.csv` has `overall_lenient`.
+  Check the val pilot (`physics/PhysBench_val`) before the full run: a large `format_gap` means the headline is
+  mostly a format penalty; report it with the score. Prior evidence (t003 smoke, Cosmos3-Nano nothink): with the
+  same instruction ("Answer with the option's letter from the given choices directly."), 9 of 9 VSI-Bench MCQ
+  replies started with the letter (`C. left`). The `<answer>D. …</answer>` replies came from MindCube raw_qa,
+  whose prompt has no answer instruction. Not yet measured on PhysBench (no GPU in this task).
 - **Tests** (`scripts/test_physbench_scoring.py`, offline after the first label fetch). GT-as-prediction gives 100
   (official, every domain/sub/ability; val 100). Garbage gives 0.17 (the empty-label rows). All-"A" gives 25.61.
   A 20-template synthetic response set over all 10,002 items (`A`, `A.`, ` A`, `a`, `(A)`, `Answer: A`, `**A**`, `E`, ``,
   `<answer>A</answer>`, …) has **0 mismatches** against the verbatim official scorer (per row and every table entry;
-  21.88) and against lmms-eval `process_results` + aggregate (27.82, n 9,985). `evaluate()` end to end on an xlsx gives
-  the same.
+  21.88) and against lmms-eval `process_results` + aggregate (27.82, n 9,985). The same set with nulls (5% of the
+  replies plus all 17 empty-label rows; json `null` for the official scorer) also has 0 mismatches (20.44). GT with
+  the empty-label rows null gives 99.83 (17 wrong, every domain 100). `evaluate()` end to end on an xlsx with
+  those nulls gives the same.
 - **Reference numbers** (official leaderboard `physbench.github.io/data/physbench_test/model_scores.js` and the HF
   README; full 10,002 test, 8 frames): GPT-4o 49.49 (property 56.91 / relationships 64.80 / scene 30.15 /
   dynamics 46.99), GPT-4o-mini 43.15, Gemini-1.5-pro 49.11, InternVL2.5-38B 51.94 (top), InternVL2.5-8B 43.88,
@@ -416,8 +455,9 @@ Local class `vlmeval/dataset/physbench.py`; official scorer copied verbatim to
 - **Differences from the official run.** (1) Cosmos gets the clip as a native video with uniform 8 frames, not 8
   JPEG frames as images. (2) No "video is split to a series of images" prefix. (3) Short clips: 4/6 frames instead
   of all frames or padding. (4) `max_tokens` / temperature come from our model layer (official: GPT `max_tokens`
-  2000, T=0; open models `max_new_tokens` 10–200, greedy). (5) Images are at native resolution (GPT-4o:
-  `detail: low`).
+  2000, T=0; open models `max_new_tokens` 10–200, greedy). (5) Image resolution: originals, except the 218
+  images above 6.9 MP, which are downsized to 6.9 MP (`PhysBench`; native: `PhysBench_native`). GPT-4o used
+  `detail: low`.
 
 ## 7. Reproducibility caveats
 
