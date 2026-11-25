@@ -70,7 +70,7 @@ SHA256 = {
     'test_answer.json': '229ddf9be156dbb93f23af5fc714addb144a781638dff89a571034c907f12446',
     'val_answer.json': 'b960d24d8f573ddc1a8a4472e0684065b4f28b90a96c7f34947b5c8c45d15940',
 }
-BUILD_VERSION = 2  # 2: video_frames / video_nframes columns
+BUILD_VERSION = 3  # 2: video_frames / video_nframes columns; 3: val TSV uses the val_answer.json taxonomy
 
 # official eval/eval_utils/task_evaluator.py
 TEST_FRAME = 8
@@ -361,17 +361,20 @@ class PhysBench(VideoBaseDataset):
                 r['video_nframes'] = frame_budget(n) if n is not None else 0
             if self.split != 'all':
                 # val labels: the official val_answer.json has the same ids and answers as the
-                # test_answer.json rows (14 rows carry an older task/ability taxonomy there; the
-                # official val scorer uses val_answer.json, and so does evaluate()).
+                # test_answer.json rows, but 14 rows carry an older task/ability taxonomy there. The
+                # official val scorer uses val_answer.json, and so does evaluate(); the val TSV takes
+                # its taxonomy from the same file so TSV and score report agree.
                 with open(_ensure_file(root, self.label_file), encoding='utf-8') as f:
                     val = {x['idx']: x for x in json.load(f)}
                 assert set(val) == {r['idx'] for r in rows}
                 for r in rows:
                     assert val[r['idx']]['answer'] == r['answer'], r['idx']
+                    for k in ('task_type', 'sub_type', 'ability_type'):
+                        r[k] = val[r['idx']][k]
             want_manifest = dict(build_version=BUILD_VERSION, hf_repo=HF_REPO, hf_revision=HF_REVISION,
                                  official_commit=OFFICIAL_COMMIT, n=len(rows),
                                  test_json_sha256=SHA256['test.json'],
-                                 labels_sha256=SHA256['test_answer.json'])
+                                 labels_sha256=SHA256[self.label_file])
             current = None
             if os.path.exists(manifest) and os.path.exists(tsv):
                 with open(manifest) as f:
