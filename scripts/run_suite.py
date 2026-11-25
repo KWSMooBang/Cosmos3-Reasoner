@@ -246,6 +246,10 @@ def run_one(item: dict[str, Any], model_layer: dict[str, Any], *, model_name: st
                 # Points the headline loses to answer format only (PhysBench: official startswith rule).
                 if isinstance(rep["overall"], (int, float)):
                     row["format_gap"] = round(row["score_lenient"] - rep["overall"], 4)
+            # Benches that check release coverage (VSTIBench, 3DSRBench_official, ...): headline_partial=1
+            # means the scored rows are not the full release (evaluation_scope=subset).
+            if rep["subscores"].get("headline_partial") == 1:
+                row["detail"] = "PARTIAL headline (evaluation_scope=subset, not the release metric)"
     (bench_out / "score.json").write_text(json.dumps(row, indent=2), "utf-8")
     return row
 

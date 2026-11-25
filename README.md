@@ -62,6 +62,9 @@ python scripts/check_spacecast_parity.py                               # SpaceCa
 python scripts/test_physbench_scoring.py                               # PhysBench scorer vs official + lmms-eval (offline after first label fetch)
 python scripts/check_physbench.py                                      # PhysBench: order, frames/video, image cap, token counts (needs data; --key PhysBench_native)
 python scripts/test_physbench_media.py                                 # PhysBench media manifest repair test (needs data)
+python scripts/check_vstibench_frames.py                              # VSTI-Bench: 32 frames reach the request (needs data)
+python scripts/test_vstibench_scoring.py --official-dir <VLM-3R>/thinking-in-space/lmms_eval/tasks/vstibench   # VSTI-Bench vs official scorer
+python scripts/test_3dsrbench_official.py --official-script <compute_3drbench_results_circular.py>             # 3DSRBench_official vs authors' scorer (~3 min)
 python scripts/run_suite.py --suite configs/suites/smoke.yaml --dry-run # print merged configs, no server
 python scripts/run_suite.py --suite configs/suites/smoke.yaml           # cosmos3_nano_nothink by default
 python scripts/run_suite.py --suite configs/suites/spatial.yaml --model cosmos3_nano_think
@@ -76,6 +79,10 @@ PhysBench (`physics/PhysBench`, 10,002 interleaved image/video MCQ, official 8 f
 official prefix-match scorer, comparable to the leaderboard; images above 6.9 MP downsized so the largest prompt
 fits TP=1 / 16384) is in the physics suite; `physics/PhysBench_val` (200, answer-format pilot) and
 `physics/PhysBench_native` (native resolution, TP=2 / 65536) are commented opt-in lines (PROTOCOL.md §6, PhysBench).
+
+The spatial suite runs `spatial/VSTIBench` (VLM-3R VSTI-Bench, 32 frames, headline = paper Avg) and
+`spatial/3DSRBench_official` (official CircularEval) instead of the upstream `3DSRBench` key, whose 4-setting
+DataFrame parse_score reads as 0.00 (PROTOCOL.md §6, VSTI-Bench / 3DSRBench).
 
 Per bench, `run_suite.py` composes (same rule as `cosmos_eval/run_all.py`)
 

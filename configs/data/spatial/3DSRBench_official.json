@@ -1,0 +1,4 @@
+{
+  "_source": "OpenCompass 3DSRBench.tsv (md5 610516a0b4710595545b7613c60524e8, shared with key 3DSRBench); vlmeval class ThreeDSRBenchOfficial (vlmeval/dataset/threedsrbench_official.py). Headline Overall = official CircularEval (authors' compute_3drbench_results_circular.py @ HF ccvl/3DSRBench 5c90e422; flipped images are separate questions; 5,157 questions) = upstream circ_eval row. PROTOCOL.md §6, 3DSRBench.",
+  "class": "ThreeDSRBenchOfficial"
+}
