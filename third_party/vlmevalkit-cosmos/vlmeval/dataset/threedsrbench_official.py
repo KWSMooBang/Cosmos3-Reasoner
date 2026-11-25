@@ -10,7 +10,10 @@ every option ordering (qid suffix "", -1, -2, -3) is answered correctly; "<id>-f
 separate questions (no flip pairing). Overall / Height / Location / Orientation / Multi-object are
 means over questions (not over sub-types). This equals upstream's `circ_eval` row, but parse_score
 does not pick that row as the headline (see PROTOCOL.md), so this key returns a flat dict with
-`Overall` = official CircularEval and the other settings as diagnostics.
+`Overall` = official CircularEval and the other settings as diagnostics. The scored rows are validated
+against the TSV's copy structure first (score_validated): a question with a missing ordering or a
+duplicated copy is excluded from Overall and flagged, and evaluation_scope is 'full' only for the
+complete release (the official script would multiply whatever copies are present).
 
 Same TSV (OpenCompass 3DSRBench.tsv, md5 610516a0b4710595545b7613c60524e8), same prompt
 (ImageMCQDataset default, as the official README runs `run.py --data 3DSRBenchv1`), same answer
@@ -76,6 +79,56 @@ def official_circular(qids, categories, hits) -> dict:
     return out
 
 
+def validate_copies(qids, meta_qids) -> dict:
+    """Check the scored rows against the TSV's copy structure.
+
+    Expected copies of a question = every TSV qid with the same official group key (all option orderings).
+    Returns {complete: group keys whose rows are exactly the expected copies, each once; incomplete: group
+    keys with a missing ordering; duplicated: group keys with a qid scored more than once;
+    n_duplicate_rows; n_missing_questions (TSV questions with no row at all)}.
+    """
+    expected = {}
+    for q in meta_qids:
+        expected.setdefault(official_group_key(str(q)), set()).add(str(q))
+    seen, counts = {}, {}
+    for q in qids:
+        q = str(q)
+        counts[q] = counts.get(q, 0) + 1
+        seen.setdefault(official_group_key(q), set()).add(q)
+    duplicated = {official_group_key(q) for q, c in counts.items() if c > 1}
+    unknown = {k for k in seen if k not in expected}
+    if unknown:
+        raise ValueError(f'qids not in the 3DSRBench TSV, e.g. {sorted(unknown)[:3]}')
+    incomplete = {k for k, v in seen.items() if v != expected[k]}
+    complete = set(seen) - incomplete - duplicated
+    return dict(complete=complete, incomplete=incomplete, duplicated=duplicated,
+                n_duplicate_rows=sum(c - 1 for c in counts.values()),
+                n_missing_questions=len(set(expected) - set(seen)), n_release_questions=len(expected))
+
+
+def score_validated(qids, categories, hits, meta_qids) -> dict:
+    """Official CircularEval over the questions whose copies are exactly the TSV's (each once).
+
+    Questions with a missing ordering or a duplicated copy are EXCLUDED from Overall and flagged (the
+    official script multiplies whatever copies are present, so one correct copy with the others missing
+    would count as correct). `overall_present_copies` = the official script on all rows as given.
+    evaluation_scope is 'full' only if every release question is scored with all its copies exactly once.
+    """
+    v = validate_copies(qids, meta_qids)
+    keep = [official_group_key(str(q)) in v['complete'] for q in qids]
+    rows = [(q, c, h) for q, c, h, k in zip(qids, categories, hits, keep) if k]
+    out = official_circular(*zip(*rows)) if rows else {'overall': 0.0, 'n_questions': 0}
+    full = (not v['incomplete'] and not v['duplicated'] and v['n_missing_questions'] == 0
+            and out['n_questions'] == N_QUESTIONS)
+    out.update(
+        evaluation_scope='full' if full else 'subset', headline_partial=int(not full),
+        n_incomplete_excluded=len(v['incomplete'] - v['duplicated']),
+        n_duplicated_excluded=len(v['duplicated']), n_duplicate_rows=v['n_duplicate_rows'],
+        n_missing_questions=v['n_missing_questions'],
+        overall_present_copies=official_circular(qids, categories, hits)['overall'] if len(qids) else 0.0)
+    return out
+
+
 def _grouped_overall(qids, hits, keyfn) -> float:
     acc = {}
     for q, h in zip(qids, hits):
@@ -118,25 +171,56 @@ class ThreeDSRBenchOfficial(_3DSRBench):
         return load(path)
 
     def evaluate(self, eval_file, **judge_kwargs):
-        res_all = super().evaluate(eval_file, **judge_kwargs)   # upstream: hits + 4-setting table
-        data = load(get_intermediate_file_path(eval_file, '_result', 'xlsx'))
+        # Hits exactly as upstream _3DSRBench.evaluate (same judge handling, mcq_vanilla_eval, result file
+        # names); upstream's own grouping is not called because it raises KeyError on partial inputs
+        # (e.g. '<id>-flip-1' present but '<id>-1' missing). Its four settings are recomputed below.
+        import string
+
+        from vlmeval.dataset.utils import DEBUG_MESSAGE, build_judge
+        from vlmeval.dataset.utils.multiple_choice import mcq_vanilla_eval
+        nproc = judge_kwargs.pop('nproc', 4)
+        model = judge_kwargs.get('model', 'exact_matching')
+        name_str = {'chatgpt-0125': 'openai', 'gpt-4-0125': 'gpt4'}.get(model, model)
+        if model == 'exact_matching':
+            model = None
+        else:
+            model = build_judge(**judge_kwargs)
+            if not model.working():
+                warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
+                warnings.warn(DEBUG_MESSAGE)
+                model = None
+        result_file = get_intermediate_file_path(eval_file, f'_{name_str}_result', 'pkl')
+        data = load(eval_file).sort_values(by='index')
+        data['prediction'] = [str(x) for x in data['prediction']]
+        for k in list(data.keys()):
+            data[k.lower() if k not in list(string.ascii_uppercase) else k] = data.pop(k)
+        meta = self.data
+        assert set(data['index']) <= set(meta['index']), \
+            f'eval_file should be the same as or a subset of dataset {self.dataset_name}'
+        data = mcq_vanilla_eval(model, data, meta, nproc, result_file, self.dataset_name)
+        dump(data, get_intermediate_file_path(eval_file, '_result', 'xlsx'))
         hits = [int(h) for h in data['hit']]
-        off = official_circular(data['qid'], data['category'], hits)
+        off = score_validated(list(data['qid']), list(data['category']), hits, list(self.data['qid']))
 
         summary = {'Overall': off['overall']}
         for t in TYPES + SUBTYPES:
             if t in off:
                 summary[t] = off[t]
-        summary['n_questions'] = off['n_questions']
-        summary['evaluation_scope'] = 'full' if (len(data) == N_ROWS and off['n_questions'] == N_QUESTIONS) \
-            else 'subset'
+        for k in ('n_questions', 'evaluation_scope', 'headline_partial', 'n_incomplete_excluded',
+                  'n_duplicated_excluded', 'n_duplicate_rows', 'n_missing_questions'):
+            summary[k] = off[k]
+        summary['Overall_present_copies'] = off['overall_present_copies']
+        if off['headline_partial']:
+            warnings.warn(f'[{self.dataset_name}] partial input: Overall covers {off["n_questions"]} of '
+                          f'{N_QUESTIONS} questions ({off["n_incomplete_excluded"]} with missing orderings and '
+                          f'{off["n_duplicated_excluded"]} with duplicated copies excluded)')
         # Diagnostics (not the paper metric): upstream's other settings.
         summary['vanilla'] = float(np.mean(hits)) * 100
         summary['flip_eval'] = _grouped_overall(data['qid'], hits, lambda x: x.replace('-flip', ''))
         summary['flip_circ_eval'] = _grouped_overall(data['qid'], hits, lambda x: x[:8])
-        circ_row = res_all[res_all['setting'] == 'circ_eval']
-        if len(circ_row):
-            summary['upstream_circ_eval'] = float(circ_row['Overall'].iloc[0]) * 100
+        # upstream's circ_eval grouping key (x[:8], or x[:13] for flips), over all rows as given
+        summary['upstream_circ_eval'] = _grouped_overall(
+            data['qid'], hits, lambda x: x[:8] if '-flip' not in x else x[:13])
 
         dump(pd.DataFrame([summary]), get_intermediate_file_path(eval_file, '_official_acc', 'csv'))
         print(f'[{self.dataset_name}] official CircularEval: {summary}')
