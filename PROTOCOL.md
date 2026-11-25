@@ -49,8 +49,13 @@ API wrapper `vlmeval/api/cosmos_reason.py` (`CosmosReason2`, image patch 16).
 | `*_think_official` | CosmosReason3Think | 0.6 | 0.95 | 20 | 0.0 | 1.0 | "You are a helpful assistant." | 16384 | official guide "with reasoning" |
 | `qwen3vl_{8b,32b}` | CosmosReason2 | 0 | null | null | null | null | none | 8192 | same as reproduction default (NVIDIA `vlmeval/config.py` drives Qwen3-VL with CosmosReason2) |
 
-- `max_tokens 16384` for thinking variants is our choice (8192 risks truncating the trace); the
-  wrapper logs `finish_reason != stop` as "truncated" and then scores the raw (unparsed) text.
+- `max_tokens 16384` for thinking variants is our choice (8192 risks truncating the trace).
+  Truncation (`finish_reason != stop`, normally `length`): upstream `CosmosReason*` classes log it
+  and score the raw, unparsed text. `CosmosReason3Think` instead parses it too: text after the last
+  `</think>` if present, otherwise an **empty prediction**; both cases log a
+  `[CosmosReason3Think] TRUNCATED` warning (count them in `run.log`) and are counted as
+  `truncated` in `$INFERENCE_STATS_FILE` if set. The empty prediction is returned without
+  triggering BaseAPI's retry loop (one request per sample).
 - `enable_thinking=false` is inherited from NVIDIA's defaults but is a no-op for the Cosmos3
   template; thinking variants send no `chat_template_kwargs`.
 - Seed: `seed=1` on every request (NVIDIA default). With T>0 the result is only reproducible

@@ -27,3 +27,6 @@ Then update this table.
 1. `vlmeval/api/cosmos_reason.py`, `vlmeval/api/__init__.py`: add `CosmosReason3Think`, a thinking
    wrapper that follows the official Cosmos 3 prompt guide (system prompt, `<think>` instruction,
    answer = text after the last `</think>`). Upstream classes are untouched. See PROTOCOL.md §4.
+2. Same files: `CosmosReason3Think` also parses length-truncated replies (text after `</think>`,
+   else empty prediction + `TRUNCATED` warning) instead of passing the raw reasoning to the scorer.
+   See PROTOCOL.md §3.

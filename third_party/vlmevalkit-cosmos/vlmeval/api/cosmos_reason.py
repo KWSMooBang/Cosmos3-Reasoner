@@ -852,10 +852,50 @@ class CosmosReason3Think(CosmosReason2):
                  **kwargs):
         super().__init__(model=model, system_prompt=system_prompt, **kwargs)
 
+    # Internal marker for "truncated before </think>": BaseAPI.generate() treats '' as a failure
+    # and would re-issue the identical (greedy, max_tokens-long) request `retry` times, so the
+    # empty prediction is produced in generate() after BaseAPI has accepted the reply.
+    _TRUNCATED_NO_ANSWER = '<<COSMOS3_THINK_TRUNCATED_NO_ANSWER>>'
+
     def parse_answer(self, answer: str) -> str:
         if '</think>' in answer:
             return answer.split('</think>')[-1].strip()
         return answer
+
+    @staticmethod
+    def _finish_reason(response):
+        try:
+            return response.json()['choices'][0]['finish_reason']
+        except Exception:
+            return None
+
+    def generate_inner(self, inputs, **kwargs):
+        # CosmosReason.generate_inner only calls parse_answer when finish_reason == 'stop'; a
+        # length-truncated reply would otherwise reach the scorer with the reasoning still in it.
+        # (Detected from the response itself, not self._last_error_type, which is shared state.)
+        ret_code, answer, response = super().generate_inner(inputs, **kwargs)
+        finish = self._finish_reason(response) if response is not None else None
+        if ret_code == 0 and finish not in (None, 'stop') and isinstance(answer, str) \
+                and self.fail_msg not in answer:
+            if '</think>' in answer:
+                answer = self.parse_answer(answer)
+                logger.warning(f'[CosmosReason3Think] TRUNCATED (finish_reason={finish}) after </think>; '
+                               f'scoring the text after </think> ({len(answer)} chars).')
+            else:
+                answer = ''
+                logger.warning(f'[CosmosReason3Think] TRUNCATED (finish_reason={finish}) before </think>; '
+                               'empty prediction.')
+            if not answer:
+                answer = self._TRUNCATED_NO_ANSWER
+        return ret_code, answer, response
+
+    def generate(self, message, **kwargs):
+        result = super().generate(message, **kwargs)
+        if result == self._TRUNCATED_NO_ANSWER:
+            return ''
+        if isinstance(result, dict) and result.get('prediction') == self._TRUNCATED_NO_ANSWER:
+            result['prediction'] = ''
+        return result
 
     def prepare_inputs(self, inputs):
         input_msgs, video_kwargs = super().prepare_inputs(inputs)
