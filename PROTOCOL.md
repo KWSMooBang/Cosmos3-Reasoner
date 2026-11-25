@@ -18,6 +18,15 @@ cosmos-framework `.agents/skills/evaluation/cosmos3/reasoner/vlmevalkit` @ `a3fb
 Any deviation of the native server from the reference flags (e.g. TP size, max-model-len for
 24 GB GPUs) must be recorded here by t002 / the run that uses it.
 
+Deviations found / applied in the t003 smoke run (vLLM 0.32.0+cu129, Cosmos3-Nano, TP=1, 1× RTX 4090):
+
+| deviation | why | evidence |
+|---|---|---|
+| `--trust-request-mm-kwargs` added | vLLM 0.32 returns HTTP 400 for any request with `mm_processor_kwargs` without it; the clients send `{fps, do_sample_frames: false}` with every video (VSI-Bench 20/20 failed, score 0) | t003 run 1 |
+| `--media-io-kwargs` video adds `"video_backend": "opencv"` | vLLM 0.32's `qwen3_vl` loader turns `fps=-1` into `min_frames=4`; a 32-frame client video reached the model as 4 frames (2 temporal groups) | t003 run 2; offline loader check |
+| TP=1, `--max-model-len 16384`, image/video `max_pixels` caps | 24 GB GPU (serving/README memory budget). KV cache measured: 20,736 tokens; GPU 1 used 21,201 MiB | t003 |
+| think configs: requested `max_tokens=16384` is clamped by the server to `16384 − prompt_len` (≈11.3k for 32-frame VSI, ≈12.5k–16k for MindCube) | max-model-len 16384 | vLLM request log |
+
 ## 2. Models
 
 | model | HF revision | verified |
