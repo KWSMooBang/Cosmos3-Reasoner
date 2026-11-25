@@ -15,3 +15,14 @@
 - 클라이언트가 temperature=0 을 보내 서버 기본값 T=0.7 을 덮어씀 (vLLM 로그 82건 확인). nothink 출력에 <think> 0/20.
 - KV 20,736 tokens @TP=1 → think 4개 동시 생성 시 preempt·timeout. think 는 TP=2 권장.
 - 판단: keep (파이프라인). next: smoke 브랜치 병합, think 설정(예산·샘플링) 결정, 평가 .venv 를 main checkout 에 재구성.
+
+### t006 think 설정 (2026-11-25, TP=2 GPU 0,1, 65536, limit20_seed0) — 출처: worktree-exp-think results/summary_t006_tp2.csv
+| run | MindCube | VSI | SpaceCast_CoT | truncated (MC/VSI/SC) |
+|---|---|---|---|---|
+| cosmos3_nano_think T=0 | 20.00 | 35.00 | 26.94 | 4/20, 6/20, 7/20 |
+| cosmos3_nano_think_official (T0.6/p.95/k20) | 15.00 | 31.25 | – | 3/20, 7/20 |
+| cosmos3_nano_nothink | 40.00 | 69.69 | 56.39 | 0 |
+- 잘린 샘플은 모두 반복 루프 (max_tokens 16384 까지). 닫힌 trace 는 ≤1.4k(T=0)/≤3.1k(official) tokens → 이중 분포. 잘린 것 제외해도 think < nothink.
+- TP=1 vs TP=2 nothink: MindCube 동일, VSI 4/20 수치 답 미세 차이 (bf16 TP 수치), 1문항 MRA 변화로 70.31→69.69. TP 간 ±1점 예상.
+- 판단: think = 보조(ablation) 지표. 설정 T=0, max_tokens 8192, truncation rate 함께 보고. 공식 샘플링 discard. headline = nothink.
+- GPU ≈3.0 h (약 1 h 는 L2 감시 누락으로 유휴).

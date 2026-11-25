@@ -18,7 +18,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - [x] t001 vlmevalkit-cosmos subtree + 평가 클라이언트 venv + configs/scripts/docs 뼈대 (main cf328c1)
 - [x] t002 serving/ native vLLM 스크립트 (main 03cdb9c)
 - [x] t003 스모크 테스트 (Nano, TP=1, GPU 1) — 파이프라인 OK, vLLM 0.32 서빙 버그 2개 수정 (main 10c75f5)
-- [ ] t006 think 설정 결정 (TP=2, GPU 0,1): T=0 vs 공식 샘플링, nothink 대조, 평가 .venv main 에 재구성 — 진행 중
+- [x] t006 think 설정: think 는 보조 지표 (T=0, max_tokens 8192, truncation rate 보고). headline = nothink. main .venv 재구성 완료
 - [x] t004 ReVSI 구현 (main e5d00aa) — HF 3dlg-hcvc/ReVSI 4.9GB, 64 frames, MRA+acc. 논문 Qwen3-VL-8B 49.1
 - [x] t005 SpaceCast-Bench 구현 (main 67817d2, 기본 모드 = CoT: 사람 결정, 공식 메인 실험과 동일) — 3,862 MCQ, 다중 시점 이미지 ≤8장, macro acc. 공식 평가기가 OpenAI 호환 API 지원
 - [ ] Beyond3D — 사람 결정 대기: HD-EPIC 원본 영상 ~115GB 필요(공유 폴더 로그인 가능성), CC-BY-NC, 9,000 MCQ(8 유형, 148 영상),
@@ -41,4 +41,4 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - 2026-11-25: think 평가는 GPU 0,1 (TP=2, 65536) 사용 (사람 지시). t003·t004·t005 main 병합·push 67817d2.
 
 ## GPU 예산
-- 미정. 사용: t003 ≈1.0 GPU-h. t006 예상 ≈2 GPU × 1–2h. 전체 벤치 실행 전 사람과 정한다.
+- 미정. 사용: t003 ≈1.0 GPU-h. t006 ≈3.0 GPU-h. 전체 벤치 실행 전 사람과 정한다.
