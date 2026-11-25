@@ -55,6 +55,8 @@ from .video_base import VideoBaseDataset
 
 HF_REPO = '3dlg-hcvc/ReVSI'
 HF_REVISION = '345a811321e2c9ec2b91a2e8df13e3a124584fa8'
+# sha256 of video.zip @ HF_REVISION (= its Git LFS oid on the Hub).
+VIDEO_ZIP_SHA256 = '7d10f8a538b1a03e83c8c01b9c11a595db6b49d661e22f2dc513358f8eabb9fe'
 
 PRE_PROMPT = 'These are frames of a video.'
 NQ_POST_PROMPT = 'Answer the question using a single integer or decimal number.'
@@ -287,6 +289,44 @@ def _download(root, patterns):
                       allow_patterns=patterns)
 
 
+def _sha256(path, bufsize=1 << 24):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        while True:
+            buf = f.read(bufsize)
+            if not buf:
+                break
+            h.update(buf)
+    return h.hexdigest()
+
+
+def _ensure_video_zip(root, zip_path):
+    """video.zip present and sha256 == LFS oid; otherwise delete and re-download (once)."""
+    for attempt in range(2):
+        if not os.path.exists(zip_path):
+            _download(root, ['video.zip'])
+        digest = _sha256(zip_path)
+        if digest == VIDEO_ZIP_SHA256:
+            return
+        os.remove(zip_path)
+        # forget snapshot_download's local-dir metadata so the file is fetched again
+        meta = os.path.join(root, '.cache', 'huggingface', 'download', 'video.zip.metadata')
+        if os.path.exists(meta):
+            os.remove(meta)
+    raise RuntimeError(f'{zip_path}: sha256 {digest} != {VIDEO_ZIP_SHA256} after re-download')
+
+
+def _missing_videos(video_root, videos):
+    """Relative video paths that do not exist or are empty."""
+    out = []
+    for v in videos:
+        p = os.path.join(video_root, v)
+        if not (os.path.isfile(p) and os.path.getsize(p) > 0):
+            out.append(v)
+    return out
+
+
 def _extract_subset(zip_path, video_root, subset):
     """Extract only `<subset>/*.mp4` members of video.zip into video_root/<subset>/ (path-safe)."""
     dst_dir = os.path.abspath(os.path.join(video_root, subset))
@@ -348,10 +388,18 @@ class ReVSI(VideoBaseDataset):
         with portalocker.Lock(os.path.join(root, '.prepare.lock'), 'w', timeout=3600):
             if not (os.path.exists(parquet) and os.path.exists(tiny_ids)):
                 _download(root, [f'{subset}/*', 'metadata/*', 'README.md'])
-            if not os.path.exists(sentinel):
-                if not os.path.exists(zip_path):
-                    _download(root, ['video.zip'])
+            # Every mp4 this subset references must exist and be non-empty; the marker alone is
+            # not trusted (partial extraction, deleted files).
+            scenes = sorted(set(pd.read_parquet(parquet, columns=['scene_id'])['scene_id'].astype(str)))
+            needed = [f'{subset}/{sc}.mp4' for sc in scenes]
+            if not os.path.exists(sentinel) or _missing_videos(video_root, needed):
+                if os.path.exists(sentinel):
+                    os.remove(sentinel)
+                _ensure_video_zip(root, zip_path)
                 n = _extract_subset(zip_path, video_root, subset)
+                missing = _missing_videos(video_root, needed)
+                if missing:
+                    raise RuntimeError(f'{len(missing)} {subset} videos missing after extraction, e.g. {missing[:3]}')
                 with open(sentinel, 'w') as f:
                     f.write(f'{n}\n')
 
