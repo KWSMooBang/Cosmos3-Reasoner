@@ -454,24 +454,134 @@ def quantiphy_root():
     return os.path.join(LMUDataRoot(), 'QuantiPhy')
 
 
-def _snapshot(repo, revision, local_dir, patterns=None):
-    from huggingface_hub import snapshot_download
-    snapshot_download(repo, repo_type='dataset', revision=revision, local_dir=local_dir, allow_patterns=patterns)
+# Media integrity. Every file a key references is checked before the cache is accepted:
+#  * the question table against a pinned sha256;
+#  * every referenced HF video against its Git-LFS sha256 at the pinned revision. The per-file
+#    (size, sha256) list comes from the HF API once, is cached next to the data, and is itself checked
+#    against a pinned digest (so later loads need no network);
+#  * hashes are cached per file with (size, mtime_ns); a normal load stat-checks, QUANTIPHY_VERIFY_MEDIA=1
+#    re-hashes everything. A missing / empty / changed file is re-downloaded (hf_hub_download,
+#    force_download) and re-checked; a second failure raises;
+#  * QuantiPhy_test 480p transcodes are recorded (source sha256, ffmpeg settings version, own sha256,
+#    frame count, size, mtime) and re-made on any mismatch;
+#  * the TSV has a manifest (build version, TSV md5, digest of the (clip, sha256, frame count) set). On
+#    reuse the TSV's own clip / n_frames columns are also compared with the verified media; any mismatch
+#    rebuilds it.
+SPLIT_FILES = {
+    'validation': dict(repo=VAL_REPO, revision=VAL_REVISION, table='validation_dataset.csv',
+                       table_sha256='4f29907c256371b998cf5f5b71287c12e2b3a60a87bacbb288036ffd35a1dc11',
+                       manifest_sha256='53556d53f34064a6520dc97a22e6d4fe18550c7658003178dd0981b93763d168'),
+    'test': dict(repo=TEST_REPO, revision=TEST_REVISION, table='test_dataset.parquet',
+                 table_sha256='0eb2db32a22ca570ceeb1a6b6ff6d3f80405102934a75a17d1d38376bea7cca2',
+                 manifest_sha256='dc9d9adf3775b27db1aa72ce46c6eb65b99c530e67029e066eead856e76c58af'),
+}
+BUILD_VERSION = 2       # TSV layout / content rules
+TRANSCODE_VERSION = 1   # _transcode_480p settings
+HF_MANIFEST = '.quantiphy_hf_manifest.json'
+VERIFIED = '.quantiphy_verified.json'
+TRANSCODES = '.quantiphy_480p_manifest.json'
 
 
-def _video_index(video_dir):
-    """video_id -> file name; tolerates the stray leading space in the validation repo
-    ('validation_videos/ captured_0041x.mp4')."""
-    out = {}
-    for f in os.listdir(video_dir):
-        if f.endswith('.mp4'):
-            out[f.strip()[:-4]] = f
-    return out
+def _verify_all():
+    return os.environ.get('QUANTIPHY_VERIFY_MEDIA', '') == '1'
+
+
+def _sha256(path, bufsize=1 << 22):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for buf in iter(lambda: f.read(bufsize), b''):
+            h.update(buf)
+    return h.hexdigest()
+
+
+def _json_digest(obj):
+    import hashlib
+    import json
+    return hashlib.sha256(json.dumps(obj, sort_keys=True).encode()).hexdigest()
+
+
+def _read_json(path, default=None):
+    import json
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def _write_json(path, obj):
+    import json
+    tmp = f'{path}.{os.getpid()}.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(obj, f, indent=1, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def _hf_video_manifest(src, info):
+    """{rfilename: [size, sha256]} of every LFS mp4 at the pinned revision (cached, digest-pinned)."""
+    path = os.path.join(src, HF_MANIFEST)
+    m = _read_json(path)
+    if m is None or _json_digest(m) != info['manifest_sha256']:
+        from huggingface_hub import HfApi
+        meta = HfApi().dataset_info(info['repo'], revision=info['revision'], files_metadata=True)
+        m = {s.rfilename: [s.lfs.size, s.lfs.sha256] for s in meta.siblings
+             if s.lfs and s.rfilename.endswith('.mp4')}
+        if _json_digest(m) != info['manifest_sha256']:
+            raise RuntimeError(f"{info['repo']}@{info['revision']}: LFS file list digest {_json_digest(m)} != pinned "
+                               f"{info['manifest_sha256']}")
+        os.makedirs(src, exist_ok=True)
+        _write_json(path, m)
+    return m
+
+
+def _hf_download(info, src, rfilename):
+    from huggingface_hub import hf_hub_download
+    hf_hub_download(info['repo'], rfilename, repo_type='dataset', revision=info['revision'], local_dir=src,
+                    force_download=True)
 
 
 def _n_frames(path):
     import decord
     return len(decord.VideoReader(path))
+
+
+def ensure_files(src, info, wanted, count_frames=False):
+    """wanted: {rfilename: (size or None, sha256)}. Returns {rfilename: record} with sha256 (+ n_frames)."""
+    state_path = os.path.join(src, VERIFIED)
+    state = _read_json(state_path, {})
+    verify_all = _verify_all()
+    out, n_fixed = {}, 0
+    try:
+        for rf, (size, sha) in sorted(wanted.items()):
+            p = os.path.join(src, rf)
+            for attempt in range(2):
+                st = os.stat(p) if os.path.isfile(p) else None
+                rec = state.get(rf)
+                good = False
+                if st is not None and st.st_size > 0 and (size is None or st.st_size == size):
+                    if (not verify_all and rec and rec.get('sha256') == sha and rec.get('size') == st.st_size
+                            and rec.get('mtime_ns') == st.st_mtime_ns):
+                        good = True
+                    elif _sha256(p) == sha:
+                        rec = dict(size=st.st_size, mtime_ns=st.st_mtime_ns, sha256=sha)
+                        good = True
+                if good:
+                    if count_frames and 'n_frames' not in rec:
+                        rec['n_frames'] = _n_frames(p)
+                    state[rf] = rec
+                    break
+                state.pop(rf, None)
+                if attempt == 1:
+                    raise RuntimeError(f'QuantiPhy: {p} missing or sha256 != {sha} after re-download')
+                n_fixed += 1
+                _hf_download(info, src, rf)
+            out[rf] = state[rf]
+    finally:
+        _write_json(state_path, state)
+    if n_fixed:
+        print(f'[QuantiPhy] re-downloaded {n_fixed} missing/changed file(s) in {src}')
+    return out
 
 
 def _transcode_480p(src, dst):
@@ -491,6 +601,64 @@ def _transcode_480p(src, dst):
         os.remove(tmp)
         raise RuntimeError(f'{src}: 480p transcode has {n_dst} frames, source {n_src}')
     os.replace(tmp, dst)
+    return n_dst
+
+
+def ensure_transcodes(src_records, src_dir, dst_dir):
+    """src_records: {video_id: (source rfilename, source sha256)}. Returns {video_id: record}."""
+    os.makedirs(dst_dir, exist_ok=True)
+    man_path = os.path.join(dst_dir, TRANSCODES)
+    man = _read_json(man_path, {})
+    verify_all = _verify_all()
+    n_made = 0
+    try:
+        for vid, (rf, src_sha) in sorted(src_records.items()):
+            dst = os.path.join(dst_dir, f'{vid}.mp4')
+            rec = man.get(vid)
+            st = os.stat(dst) if os.path.isfile(dst) else None
+            good = (st is not None and st.st_size > 0 and rec is not None and rec.get('src_sha256') == src_sha
+                    and rec.get('version') == TRANSCODE_VERSION and rec.get('size') == st.st_size)
+            if good and (verify_all or rec.get('mtime_ns') != st.st_mtime_ns):
+                good = _sha256(dst) == rec.get('sha256')
+                if good:
+                    rec['mtime_ns'] = st.st_mtime_ns
+            if not good:
+                man.pop(vid, None)
+                n = _transcode_480p(os.path.join(src_dir, rf), dst)
+                st = os.stat(dst)
+                man[vid] = dict(src_sha256=src_sha, version=TRANSCODE_VERSION, sha256=_sha256(dst), n_frames=n,
+                                size=st.st_size, mtime_ns=st.st_mtime_ns)
+                n_made += 1
+                if n_made % 25 == 0:
+                    _write_json(man_path, man)
+    finally:
+        _write_json(man_path, man)
+    if n_made:
+        print(f'[QuantiPhy] made {n_made} 480p transcode(s) in {dst_dir}')
+    return {vid: man[vid] for vid in src_records}
+
+
+def _file_md5(path):
+    import hashlib
+    h = hashlib.md5()
+    with open(path, 'rb') as f:
+        for buf in iter(lambda: f.read(1 << 22), b''):
+            h.update(buf)
+    return h.hexdigest()
+
+
+def tsv_is_current(tsv, manifest_path, media):
+    """TSV reusable: manifest matches (version, md5, media digest) and its clip / n_frames columns
+    agree with the verified media {clip: (sha256, n_frames)}."""
+    man = _read_json(manifest_path)
+    if not (os.path.exists(tsv) and man and man.get('build_version') == BUILD_VERSION
+            and man.get('media_digest') == _json_digest(media) and man.get('tsv_md5') == _file_md5(tsv)):
+        return False
+    try:
+        d = pd.read_csv(tsv, sep='\t', usecols=['video', 'n_frames'])
+    except (ValueError, OSError):
+        return False
+    return all(v in media and int(n) == int(media[v][1]) for v, n in zip(d['video'], d['n_frames']))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -628,51 +796,61 @@ class QuantiPhy(VideoBaseDataset):
         root = quantiphy_root()
         os.makedirs(root, exist_ok=True)
         tsv = os.path.join(LMUDataRoot(), f'{dataset}.tsv')
+        man_path = os.path.join(LMUDataRoot(), f'{dataset}.manifest.json')
+        info = SPLIT_FILES[self.split]
+        src = os.path.join(root, self.split)
         with portalocker.Lock(os.path.join(root, '.prepare.lock'), 'w', timeout=7200):
+            ensure_files(src, info, {info['table']: (None, info['table_sha256'])})
+            df = self._read_table(src)
+            hfm = _hf_video_manifest(src, info)
+            by_id = {}
+            for rf in hfm:  # basename stripped: the validation repo has 'validation_videos/ captured_0041x.mp4'
+                if self.split == 'validation' and not rf.startswith('validation_videos/'):
+                    continue
+                by_id[os.path.basename(rf).strip()[:-4]] = rf
+            vids = sorted(set(df['video_id']))
+            missing = [v for v in vids if v not in by_id]
+            if missing:
+                raise RuntimeError(f'QuantiPhy {self.split}: {len(missing)} videos not in the HF repo, e.g. {missing[:3]}')
+            recs = ensure_files(src, info, {by_id[v]: tuple(hfm[by_id[v]]) for v in vids},
+                                count_frames=self.split == 'validation')
             if self.split == 'validation':
-                src = os.path.join(root, 'validation')
-                csv = os.path.join(src, 'validation_dataset.csv')
-                vdir = os.path.join(src, 'validation_videos')
-                if not (os.path.exists(csv) and os.path.isdir(vdir)):
-                    _snapshot(VAL_REPO, VAL_REVISION, src)
-                video_root = vdir
+                video_root = src
+                clip_of = {v: by_id[v] for v in vids}
+                media = {by_id[v]: [recs[by_id[v]]['sha256'], recs[by_id[v]]['n_frames']] for v in vids}
             else:
-                src = os.path.join(root, 'test')
-                pq = os.path.join(src, 'test_dataset.parquet')
-                if not os.path.exists(pq):
-                    _snapshot(TEST_REPO, TEST_REVISION, src)
                 video_root = os.path.join(root, 'test_480p')
-            if not os.path.exists(tsv):
-                out = self._build_tsv(root, src, video_root)
+                tr = ensure_transcodes({v: (by_id[v], recs[by_id[v]]['sha256']) for v in vids}, src, video_root)
+                clip_of = {v: f'{v}.mp4' for v in vids}
+                media = {f'{v}.mp4': [tr[v]['sha256'], tr[v]['n_frames']] for v in vids}
+            if not tsv_is_current(tsv, man_path, media):
+                out = self._build_tsv(root, df, clip_of, media)
                 tmp = tsv + '.tmp.tsv'
                 out.to_csv(tmp, sep='\t', index=False)
                 os.replace(tmp, tsv)
+                _write_json(man_path, dict(build_version=BUILD_VERSION, split=self.split, repo=info['repo'],
+                                           revision=info['revision'], table_sha256=info['table_sha256'],
+                                           tsv_md5=_file_md5(tsv), media_digest=_json_digest(media),
+                                           n_rows=len(out), n_videos=len(media)))
         return dict(root=video_root, data_file=tsv)
 
-    def _build_tsv(self, root, src, video_root):
+    def _read_table(self, src):
         if self.split == 'validation':
-            df = pd.read_csv(os.path.join(src, 'validation_dataset.csv'), index_col=0)
+            return pd.read_csv(os.path.join(src, 'validation_dataset.csv'), index_col=0)
+        return pd.read_parquet(os.path.join(src, 'test_dataset.parquet'))
+
+    def _build_tsv(self, root, df, clip_of, media):
+        if self.split == 'validation':
             ids = df.index.astype(int)
             id_match = ['official'] * len(df)
             gt = df['ground_truth_posterior'].astype(float)
             prior = df['ground_truth_prior']
-            vidx = _video_index(video_root)
         else:
-            df = pd.read_parquet(os.path.join(src, 'test_dataset.parquet'))
             ids, id_match = match_template_ids(df, load_template(root))  # by question identity, not row order
             gt = pd.Series([np.nan] * len(df))
             prior = df['prior']
-            os.makedirs(video_root, exist_ok=True)
-            srcidx = _video_index(src)
-            for vid in sorted(set(df['video_id'])):
-                dst = os.path.join(video_root, f'{vid}.mp4')
-                if not os.path.exists(dst):
-                    _transcode_480p(os.path.join(src, srcidx[vid]), dst)
-            vidx = _video_index(video_root)
-        missing = sorted(set(df['video_id']) - set(vidx))
-        if missing:
-            raise RuntimeError(f'QuantiPhy {self.split}: {len(missing)} videos missing, e.g. {missing[:3]}')
-        nfr = {v: _n_frames(os.path.join(video_root, vidx[v])) for v in sorted(set(df['video_id']))}
+        nfr = {v: media[clip_of[v]][1] for v in clip_of}
+        vidx = clip_of
         return pd.DataFrame({
             'index': ids,
             'video_id': df['video_id'].values,
@@ -697,7 +875,7 @@ class QuantiPhy(VideoBaseDataset):
         import decord
         from PIL import Image
 
-        stem = os.path.splitext(video.strip())[0]
+        stem = os.path.splitext(os.path.basename(video).strip())[0]
         frame_dir = os.path.join(self.frame_root, stem)
         os.makedirs(frame_dir, exist_ok=True)
         lock_path = os.path.join(self.frame_root, stem + '.lock')
