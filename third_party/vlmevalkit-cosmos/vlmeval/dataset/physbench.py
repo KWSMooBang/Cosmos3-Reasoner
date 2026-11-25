@@ -29,7 +29,9 @@ frames rounded down to an even count (qwen-vl-utils needs an even nframes <= tot
 
 Scoring (headline, official bit-for-bit): `pred == gt or pred.startswith(gt)` on the raw prediction
 string (text after the last `</think>` for *_think models); `Overall` = correct / number of scored
-items; per task_type / sub_type / ability_type accuracy = correct / total of that type. This is the
+items; per task_type / sub_type / ability_type accuracy = correct / answered items of that type. A
+missing prediction (None/NaN, incl. an empty reply after the xlsx round trip) is handled as the
+official null: wrong in Overall and skipped in the per-type totals (n_unanswered). This is the
 verbatim official `calculate_accuracy` (utils/physbench_official.py) and is asserted equal to our
 per-row computation on every evaluate(). Official label quirks are kept: 17 items have an empty
 label (every prediction startswith '' -> always correct), 7 have non-letter / multi labels
@@ -91,25 +93,34 @@ PLACEHOLDER_RE = re.compile(r'(<video>|<image>)')
 # ----------------------------------------------------------------------------------------------
 # Scoring
 # ----------------------------------------------------------------------------------------------
-def as_prediction(x) -> str:
-    """Prediction cell -> string (NaN / None -> '')."""
+def as_prediction(x):
+    """Prediction cell -> str, or None for a missing prediction (None / NaN).
+
+    run.py stores predictions in xlsx, where an empty reply and a missing one both load as NaN; both
+    become None here, i.e. the official "no answer" case (the official resume logic also treats ''
+    as not answered)."""
     if x is None or (isinstance(x, float) and np.isnan(x)):
-        return ''
+        return None
     return str(x)
 
 
-def official_hit(pred: str, gt: str) -> bool:
-    """eval/print_test_score.py answer_true()."""
+def official_hit(pred, gt: str) -> bool:
+    """eval/print_test_score.py answer_true(); a None prediction is never correct (the official
+    calculate_accuracy skips it: wrong in Overall, absent from every per-type total)."""
+    if pred is None:
+        return False
     return pred == gt or pred.startswith(gt)
 
 
-def lmms_letter(pred: str) -> str:
+def lmms_letter(pred) -> str:
     """lmms-eval physbench_process_results(): first character if it is A-D (case-insensitive)."""
     pred = pred.strip() if pred else ''
     return pred[0].upper() if pred and pred[0].upper() in 'ABCD' else ''
 
 
-def lenient_hit(pred: str, gt: str) -> bool:
+def lenient_hit(pred, gt: str) -> bool:
+    if pred is None:
+        return False
     if official_hit(pred, gt):
         return True
     from .utils.spatial_bench.matching_func import can_match_option
@@ -118,7 +129,7 @@ def lenient_hit(pred: str, gt: str) -> bool:
 
 
 def score_rows(preds, gts):
-    """Per-row official / lenient / lmms results. preds, gts: aligned lists of str."""
+    """Per-row official / lenient / lmms results. preds: str or None; gts: str."""
     hit = [official_hit(p, g) for p, g in zip(preds, gts)]
     len_hit = [h or lenient_hit(p, g) for h, p, g in zip(hit, preds, gts)]
     lmms = [lmms_letter(p) for p in preds]
@@ -127,24 +138,29 @@ def score_rows(preds, gts):
 
 
 def summarize(df):
-    """df columns: hit, hit_lenient, lmms_hit, has_label, task_type, sub_type, ability_type."""
+    """df columns: hit, hit_lenient, lmms_hit, has_label, answered, task_type, sub_type, ability_type.
+
+    Official semantics: Overall = correct / all rows (unanswered rows count as wrong); per-type
+    accuracy = correct / answered rows of that type (unanswered rows are skipped)."""
     n = len(df)
+    ans = df[df['answered']]
     out = OrderedDict()
     out['Overall'] = 100.0 * df['hit'].sum() / n if n else 0.0
     for t in TASK_ORDER:
-        g = df[df['task_type'] == t]
+        g = ans[ans['task_type'] == t]
         if len(g):
             out[t] = 100.0 * g['hit'].sum() / len(g)
     for t in TASK_ORDER:
         for s in SUB_ORDER[t]:
-            g = df[df['sub_type'] == s]
+            g = ans[ans['sub_type'] == s]
             if len(g):
                 out[f'{t}/{s}'] = 100.0 * g['hit'].sum() / len(g)
     for a in ABILITY_ORDER:
-        g = df[df['ability_type'] == a]
+        g = ans[ans['ability_type'] == a]
         if len(g):
             out[f'ability/{a}'] = 100.0 * g['hit'].sum() / len(g)
     out['n'] = n
+    out['n_unanswered'] = int(n - len(ans))
     out['Overall_lenient'] = 100.0 * df['hit_lenient'].sum() / n if n else 0.0
     lab = df[df['has_label']]
     out['lmms_n'] = len(lab)
@@ -440,7 +456,7 @@ class PhysBench(VideoBaseDataset):
             sub_type=[labels[int(i)]['sub_type'] for i in data['index']],
             ability_type=[labels[int(i)]['ability_type'] for i in data['index']],
             hit=hit, hit_lenient=len_hit, lmms_pred=lmms, lmms_hit=lmms_hit,
-            has_label=[bool(g) for g in gts]))
+            has_label=[bool(g) for g in gts], answered=[p is not None for p in preds]))
         summary = summarize(df)
 
         # Cross-check with the verbatim official scorer on the same predictions.
@@ -451,6 +467,7 @@ class PhysBench(VideoBaseDataset):
         label_path = os.path.join(root, 'hf', self.label_file)
         off = calculate_accuracy(label_path, sub_file)
         assert off['overall_correct'] == int(df['hit'].sum()) and off['overall_total'] == len(df)
+        assert abs(off['overall_accuracy'] - summary['Overall']) < 1e-9
         for t, v in off['task_type_accuracy'].items():
             assert abs(v['accuracy'] - summary[t]) < 1e-9, (t, v, summary[t])
         summary['official_overall'] = off['overall_accuracy']
