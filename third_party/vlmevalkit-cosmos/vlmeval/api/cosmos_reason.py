@@ -825,3 +825,45 @@ class Qwen3VLThink(CosmosReason2Think):
             return match.group(2).strip() # answer
         else:
             return answer
+
+
+# --- Local addition (Cosmos3-Reasoner eval repo; not in NVIDIA upstream) -------------------
+# Thinking variant that follows the official Cosmos 3 Reasoner prompt guide
+# (NVIDIA/cosmos cookbooks/cosmos3/reasoner/reasoner_prompt_guide.md @ 1fe7e3be, mirrored in
+# cosmos-framework .agents/skills/cosmos3-inference-reasoning/references/prompt-guide.md):
+#   * system prompt "You are a helpful assistant."
+#   * reasoning is switched on purely through the user prompt by appending the instruction
+#     below AFTER the task text (the Cosmos3 chat template has no `enable_thinking` switch);
+#   * the final answer is whatever follows the last `</think>` (the cookbook's own parser:
+#     `text.split("</think>")[-1]`).
+# CosmosReason2Think differs: no system prompt, a different instruction sentence appended to
+# every user text item, and a regex that requires the response to start with `<think>`.
+COSMOS3_SYSTEM_PROMPT = 'You are a helpful assistant.'
+COSMOS3_THINK_INSTRUCTION = (
+    'Answer the question using the following format:\n\n'
+    '<think>\nYour reasoning.\n</think>\n\n'
+    'Write your final answer immediately after the </think> tag.'
+)
+
+
+class CosmosReason3Think(CosmosReason2):
+
+    def __init__(self, model: str = 'nvidia/Cosmos3-Nano', system_prompt: str = COSMOS3_SYSTEM_PROMPT,
+                 **kwargs):
+        super().__init__(model=model, system_prompt=system_prompt, **kwargs)
+
+    def parse_answer(self, answer: str) -> str:
+        if '</think>' in answer:
+            return answer.split('</think>')[-1].strip()
+        return answer
+
+    def prepare_inputs(self, inputs):
+        input_msgs, video_kwargs = super().prepare_inputs(inputs)
+        # Append once, after the task text of the final user turn (media stay before text).
+        last_user = next(m for m in reversed(input_msgs) if m['role'] == 'user')
+        texts = [c for c in last_user['content'] if c.get('type') == 'text']
+        if texts:
+            texts[-1]['text'] = texts[-1]['text'].rstrip() + '\n\n' + COSMOS3_THINK_INSTRUCTION
+        else:
+            last_user['content'].append(dict(type='text', text=COSMOS3_THINK_INSTRUCTION))
+        return input_msgs, video_kwargs

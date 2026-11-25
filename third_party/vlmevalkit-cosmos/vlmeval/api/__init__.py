@@ -5,7 +5,7 @@ from .bluelm_api import BlueLM_API, BlueLMWrapper
 from .claude import Claude3V, Claude_Wrapper
 from .cloudwalk import CWWrapper
 from .cosmos_reason import (CosmosReason1, CosmosReason1Think, CosmosReason2, CosmosReason2Think,
-                            Qwen3VLThink)
+                            CosmosReason3Think, Qwen3VLThink)
 from .doubao_vl_api import DoubaoVL
 from .gcp_vertex import GCPVertexAPI
 from .gemini import Gemini, GeminiWrapper
@@ -49,7 +49,7 @@ __all__ = [
     'VideoChatOnlineV2API', 'TeleMM2_API', 'TeleMM2Thinking_API', 'TogetherAPI', 'GCPVertexAPI',
     'BedrockAPI', 'SenseChatVisionV2API', 'MiniMaxAPI',
     'CosmosReason1', 'CosmosReason1Think',
-    'CosmosReason2', 'CosmosReason2Think',
+    'CosmosReason2', 'CosmosReason2Think', 'CosmosReason3Think',
     'Qwen3VLThink',
     'LVS_service',
     'Nemotron',
