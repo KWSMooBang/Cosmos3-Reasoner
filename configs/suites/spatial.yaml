@@ -15,6 +15,7 @@ benchmarks:
   - spatial/STI-Bench
   - spatial/SiteBenchVideo
   - spatial/DSRBench
+  - spatial/ReVSI_64frame            # official pre-sampled 64-frame videos (PROTOCOL.md §6)
   # --- image / multi-view MCQ ---
   - spatial/MMSIBench_wo_circular
   - spatial/OmniSpatialBench

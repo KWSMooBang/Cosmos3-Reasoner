@@ -144,6 +144,7 @@ from .reasonmap_plus import ReasonMap_Plus
 from .refcoco import RefCOCODataset
 from .refspatial import RefSpatialDataset
 from .refspatialbench import RefSpatialBench
+from .revsi import ReVSI
 from .robospatial_home import RoboSpatialHome
 from .robospatialbench import RoboSpatialBench
 from .sarena import SArena
@@ -384,6 +385,7 @@ VIDEO_DATASET = [
 
 # add by EASI team
 VIDEO_DATASET += [SiteBenchVideo, VsiBench, VsiSuperRecall, VsiSuperCount, MMSIVideoBench, STIBench, DSRBench]  # noqa: E501
+VIDEO_DATASET += [ReVSI]
 
 TEXT_DATASET = [
     TextMCQDataset, IFBench, SGI_Bench_Wet_Experiment, SGI_Bench_Dry_Experiment,

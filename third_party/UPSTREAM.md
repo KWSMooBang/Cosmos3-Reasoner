@@ -30,3 +30,9 @@ Then update this table.
 2. `vlmeval/api/cosmos_reason.py`: `CosmosReason3Think` also parses length-truncated replies (text after `</think>`,
    else empty prediction + `TRUNCATED` warning) instead of passing the raw reasoning to the scorer.
    See PROTOCOL.md §3.
+3. `vlmeval/dataset/revsi.py` (new), `vlmeval/dataset/__init__.py` (one import + `VIDEO_DATASET += [ReVSI]`):
+   ReVSI dataset (keys `ReVSI_{16,32,64}frame`, `ReVSI_tiny`), ported from the official evaluation code:
+   open-compass/VLMEvalKit `vlmeval/dataset/revsi.py` @ `f5296f04f3d6b5d5664f55aa64014c9dc942ed15`,
+   EvolvingLMMs-Lab/lmms-eval `lmms_eval/tasks/revsi/` @ `9134731f4f617e62ee80bcae9d0d5d9695ea55ef`,
+   eamonn-zh/torchmetrics_ext `metrics/vqa/revsi.py` @ `3c18d782f51cbe31558ea7b53cbece5561b1721e`
+   (referenced by 3dlg-hcvc/revsi @ `b26df855`). Data: HF `3dlg-hcvc/ReVSI` @ `345a811`. See PROTOCOL.md §6.1.

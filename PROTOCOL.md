@@ -142,6 +142,7 @@ client's qwen-vl-utils `nframes` sampling is also uniform linspace).
 | STI-Bench | spatial | video | 30 | MCQ rule | exact_matching | official paper setting (kit comment) |
 | SiteBenchVideo | spatial | video | 32 | MCQ rule | exact_matching | kit variant `_32frame` (no official value annotated) |
 | DSRBench | spatial | video | 1 fps | MCQ rule | exact_matching | official paper setting (kit comment) |
+| ReVSI_64frame (also _32frame, _16frame, _tiny) | spatial | video | 64 official pre-sampled | NA MRA + MCQ exact match (official parser) | none (ignored) | official `video.zip:64_frame/*.mp4`; §6.1 |
 | MMSIBench_wo_circular, OmniSpatialBench, ViewSpatialBench, MindCubeBench_raw_qa (smoke: _tiny), SiteBenchImage, EmbSpatialBench, ERQA, 3DSRBench, BLINK, MMVP | spatial | image | – | MCQ rule extraction | exact_matching | – |
 | SparBench | spatial | image | – | MCQ rule + NA | exact_matching (rule path) | – |
 | Spatial457, Omni3DBench | spatial | image | – | dataset-internal rule metric | none used | – |
@@ -157,6 +158,88 @@ VLMEvalKit default would be `deepseek` via SiliconFlow). Pinned judge: OpenAI
 `gpt-4o-mini-2024-07-18`, judge `max_tokens` as set by the dataset, `retry 3`, `--judge-nproc 4`.
 MCQ benches pass `--judge exact_matching`, overriding run.py's default `chatgpt-0125` fallback
 extractor.
+
+### 6.1 ReVSI
+
+Source: `vlmeval/dataset/revsi.py`, a port of the official evaluation code (upstream VLMEvalKit
+`revsi.py` @ `f5296f0`, lmms-eval `tasks/revsi` @ `9134731`, torchmetrics_ext `ReVSIMetric` @ `3c18d78`;
+all three agree). Data: HF `3dlg-hcvc/ReVSI` @ `345a811` in `$LMUData/ReVSI` (parquet subsets,
+`metadata/`, `video.zip`; only the needed `<N>_frame/` folder is extracted to `$LMUData/ReVSI/videos/`).
+
+| key | parquet subset | questions | tasks | paper Qwen3-VL-8B / 32B Avg |
+|---|---|---|---|---|
+| `ReVSI_64frame` (spatial suite) | `64_frame` | 6,616 | 7 | 49.1 / 53.3 (main table) |
+| `ReVSI_32frame` | `32_frame` | 6,158 | 7 | 45.6 / 51.2 (Table 12) |
+| `ReVSI_16frame` | `16_frame` | 4,568 | 5 (no Room Size, Route Plan) | 43.7 / 46.2 (Table 13) |
+| `ReVSI_tiny` | `64_frame` ∩ `metadata/tiny_set_question_ids.txt` | 1,057 (of 1,093 ids) | 7 | – (paper: proprietary models only) |
+
+Per-task counts, 64-frame: Obj. Count 1,090 (single 694 / multiple 396), Abs. Dist 1,208, Obj. Size 1,126,
+Room Size 302 (174 / 128), Rel. Dist 1,279 (closest 760 / farthest 519), Rel. Dir 1,332
+(fwd-easy 400, bwd-easy 258, fwd-hard 354, bwd-hard 320), Route Plan 279. The question set differs per
+frame budget (questions about objects not visible in the N frames were removed by the authors).
+
+- **Frames.** The official N-frame videos are pre-sampled by the authors (hierarchical uniform
+  sampling of the all-frame video: 64 ⊂ all, 32 ⊂ 64, 16 ⊂ 32, indices in
+  `metadata/sampled_video_frame_idx.json`) and shipped as `video.zip:<N>_frame/<scene>.mp4` with
+  exactly N frames. `ReVSI.build_prompt` sends that mp4 as a video message that **pins
+  `nframes=N`**, so the budget holds for any model config and for direct `run.py` use. By the
+  §5 rule, a sampling key in the message makes `CosmosReason*` ignore **all** model-level sampling
+  attributes (nframes/fps/max_pixels/total_pixels/min_pixels/max_frames) for ReVSI. Resolution
+  therefore uses the qwen-vl-utils defaults, which keep ReVSI's 640x480 frames at native size; a
+  model-level `max_pixels` etc. would not apply here (`check_video_sampling.py` fails if a model
+  layer sets one for ReVSI). The data config still carries `video_sampling.nframes = N`, which
+  must equal the pinned key. qwen-vl-utils' `linspace(0, N-1, N)` over an N-frame video is the
+  identity, so every official frame is sent once, in order (fps sent = the mp4's fps, i.e. the
+  frames' original timestamps). Proof on the real files: `scripts/check_revsi_frames.py` (also with no
+  `video_sampling` and with conflicting model-level nframes=8 / fps=2 / max_frames=4: still N frames
+  in order); synthetic: `scripts/check_video_sampling.py`.
+  Evidence (2026-11-25, `cosmos3_nano_nothink` layer, endpoint stubbed): for sampled scenes of every key the
+  request carries exactly N frames (64/32/16) at native size (640x480 / 480x640), request frame i ==
+  mp4 frame i for all i, `mm_processor_kwargs={do_sample_frames: false, fps: <mp4 fps>}`; the image path
+  yields N images. Provenance vs `sampled_video_frame_idx.json` (all-frame video): exact for every
+  64-frame scene checked (7); some 32/16-frame encodes of long ARKitScenes videos match a neighbouring
+  all-frame frame (offsets -1..-5, <= 0.5 s) - a property of the official files, which upstream sends too.
+  `video.zip` sha256 `7d10f8a5...eabb9fe` (= HF LFS oid).
+  Non-VIDEO_LLM clients get all N frames as images. The class rejects `nframe != N` and `fps > 0`.
+- **Prompt** (official, verbatim): `These are frames of a video.\n<question>\n` + numeric:
+  `Answer the question using a single integer or decimal number.`; MCQ:
+  `Options:\n<A. ...>\n...\nAnswer with the option's letter from the given choices directly.`
+  Video before text. `TYPE='MCQ'` (upstream: `Video-VQA`) so that `CosmosReason*.use_custom_prompt`
+  returns False and this prompt is used for every question.
+- **Metric** (official): numeric -> MRA, `mean_c 1[|p-t|/t <= 1-c]`, c in 0.50:0.05:0.95 (10 thresholds);
+  MCQ -> case-insensitive exact match. Task = mean of its sub-type means (Obj. Count = single, multiple;
+  Room Size = single, multiple; Rel. Dist = closest, farthest; Rel. Dir = 4 sub-types). **Avg = mean of
+  the task columns present** (7; 5 at 16 frames). Reported 0-100.
+- **Answer parsing (headline = official parser; L1 decision 2026-11-25).** Headline `Overall` /
+  `<task>` = the official parser bit-for-bit (first whitespace token, `rstrip('.')`; letter match /
+  `float()` + MRA; anything else 0), so it is directly comparable with the paper. This is what
+  `parse_score.py` reports as `overall`, and what `run_suite.py` and `results/summary.csv` show.
+  Diagnostic `Overall_lenient` / `<task>_lenient` = same, but when the official token is not a valid
+  answer (not one of the option letters / not a finite number) it falls back to the kit's rule
+  extractors (`can_match_option`, `can_match_na` on the text after the last `</think>`; thousands
+  separators removed), e.g. `(B)`, `The answer is B.`, `3m`, `about 2.5 meters`, `four`. Where the
+  official parse succeeds both are identical, so `Overall_lenient - Overall` = points lost to answer
+  format (expect ~0 for format-following non-thinking models). `run_suite.py` stores it as
+  `score_lenient` in `score.json`; `results/summary.csv` has it in `overall_lenient` (empty for
+  other benches). No unit conversion (the questions state the unit). Per-row results:
+  `<eval>_revsi_score.xlsx` (`score`, `score_lenient`, `parse_mode` official/fallback/fail); per-task
+  table `<eval>_acc.csv` (n, score, score_lenient, n_fallback, n_unparsed).
+- **No judge.** `evaluate()` ignores `--judge`.
+- **Upstream quirks (kept for parity).** MRA is computed exactly as upstream:
+  `abs(p - t) / t <= 1 - np.linspace(0.5, 0.95, 10)` in float64. A relative error that sits exactly on a
+  threshold passes or fails depending on float rounding: `120` vs `100` scores 0.6 (0.2 > 1-0.80 =
+  0.19999999999999996), while `1.2` vs `1.0` scores 0.7 and exact maths would give 0.7 for both. We do not
+  fix this, so our numbers match the official scorer bit-for-bit (tested in `test_revsi_scoring.py`).
+- **Differences from the paper setup** (besides the client/server of §1-3): the paper ran Qwen3-VL
+  through SWIFT / lmms-eval (HF transformers or vLLM, greedy, lmms-eval `max_new_tokens 16`); here the
+  model defaults apply (greedy, `max_tokens` 8192/16384) and frames are re-encoded by the client at
+  qwen-vl-utils default resolution limits (ReVSI frames are 640x480 / 480x640 / 360x640, below the
+  786,432 px per-frame cap, so native resolution). `all_frame` (2 fps / variable length) is not provided.
+- **Data integrity:** the extraction marker is trusted only if every mp4 the subset references exists
+  and is non-empty; otherwise `video.zip` is checked against its sha256 (deleted and re-downloaded
+  on mismatch) and the subset is re-extracted. Frame JPEGs (image path) are written atomically.
+- **Tests:** `scripts/test_revsi_scoring.py` (offline: GT -> 100 for all subsets, garbage -> 0, random
+  -> chance, 20 hand-made parse cases, MRA vs upstream formula).
 
 ## 7. Reproducibility caveats
 
