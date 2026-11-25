@@ -155,6 +155,7 @@ client's qwen-vl-utils `nframes` sampling is also uniform linspace).
 | PhyX_mini_MC, PhyX_MC | physics | image | – | string-level (`valid_type=STR`) | none | – |
 | SeePhys | physics | image | – | LLM extraction + compare | **`gpt-4o-mini-2024-07-18`** (OpenAI, pinned snapshot) | – |
 | PhysBench (also _val; _native opt-in) | physics | interleaved images + video; images capped at 6.9 MP (TP=1) | 8 uniform (pinned; 4–6 for 19 clips < 8 frames) | official prefix match (`pred.startswith(gt)`) | none (ignored) | official `test_frame = 8`; see "PhysBench" below |
+| QuantiPhy (validation, 158 q) | physics | video | every frame (even-rounded), 480p | official `parse_number` + MRA, mean of 4 categories | none | official protocol; see "QuantiPhy" below |
 
 Judge policy: rule-based/exact matching wherever the dataset supports it (all MCQ benches,
 VSI/Spar NA questions, PhyX). The only LLM-judged bench is SeePhys (its evaluate() requires one;
@@ -614,6 +615,158 @@ resolution, longest side 640) is released, not the HSSD synthetic split.
   - SpatialReasoner: 60.3
   - Human: 95.7
   - **No official Qwen3-VL number**: the Qwen3-VL tech report and model cards do not list 3DSRBench.
+
+### QuantiPhy
+
+Local class `vlmeval/dataset/quantiphy.py`. Paper: arXiv 2512.19526 (CVPR 2026), project page
+https://quantiphy.stanford.edu/. Official code: github.com/Paulineli/QuantiPhy @ `aa8daa7` (MIT;
+`model_run_example/run_API_results.py` sha256 `53f5d8c7…`, `evaluator.py` sha256 `98c741f5…`). Data:
+HF `PaulineLi/QuantiPhy-validation` @ `2d56ff3` and `PaulineLi/QuantiPhy` @ `ca0658a` (annotations CC BY 4.0,
+ungated; videos keep their original licences, research and evaluation use). `qqqkai/QuantiPhy` is an older
+mirror of the test repo (same files, older README) and is not used.
+
+- Task: one short video (2–3 s, static camera) plus **one physical prior** in real units (object size, or
+  velocity / acceleration at a timestamp; 3D clips also get camera–object distances as `depth_info`). The
+  model answers one continuous quantity (size, velocity, acceleration, distance) in the unit the question names.
+  Categories = `inference_type[0] + video_type[1]`: **2S / 2D / 3S / 3D** (static or dynamic prior × 2D or 3D scene).
+- Keys:
+
+  | key | split | questions | videos | 2S / 2D / 3S / 3D | GT | output |
+  |---|---|---|---|---|---|---|
+  | `QuantiPhy` (physics suite) | official validation | 158 | 24 | 32 / 37 / 42 / 47 | public | score |
+  | `QuantiPhy_test` (commented in the suite) | official test | 3,289 | 568 | 579 / 1,163 / 578 / 969 | withheld | submission CSV only |
+
+  The 158-question validation split (≈4 % of the benchmark; the 2026-10-08 erratum removed 1 of 159) is the
+  only split that can be scored locally. The test GT is withheld for good ("remains withheld so QuantiPhy can
+  serve as a reliable long-term benchmark") and the NeurIPS 2026 challenge portal closed on 2026-10-25.
+  `QuantiPhy_test` writes `*_quantiphy_submission.csv` in the official template (sha256 `5f1e8367…`, sorted by
+  `id`). Ids are matched by **question identity**, not row order (`match_template_ids`): exact match on
+  (video_id, video_source, inference_type, prior, fps, video_type, depth_info, question) for 3,190 rows. For the
+  99 rows the 2026-10 data fixes changed (question spelling 60, depth_info 36, video_type 5), the mutual-best
+  question-text match inside the same (video_id, video_source, inference_type, prior, fps) group is used
+  (difflib ratio ≥ 0.6 and ≥ 0.02 ahead of the runner-up both ways; observed min 0.909). Duplicate identities,
+  ambiguous or missing matches raise. At export the ids are re-derived from each prediction row's own content
+  and must equal the stored ids, and every template id must occur exactly once; otherwise no CSV is written.
+  Tested: two swapped questions of the same video and type keep their own ids, a swapped-id prediction table is
+  refused, and a shuffled template gives the same ids. Today the matched ids equal the parquet row order (3,289/3,289).
+  The prompt uses the corrected 2026-10 wording from the parquet.
+- Request (official zero-shot v3 = the paper's main setting): system prompt
+  `You are an expert video analyst specializing in physics measurements. …` (verbatim, 5 lines), then one user
+  turn `[video, text]`, text = `Given that {prior}.` + (3D only) `Additionally, you have the following information
+  about the distance between the objects in the video and the shooting camera: {depth_info}.` + ` {question}` +
+  `\n\nPlease answer the question with numbers and units ONLY. No explanation needed.` Prompt parity with the
+  official code is 158/158 (`scripts/test_quantiphy_scoring.py`). The system prompt goes through
+  `BaseAPI.preprocess_message_with_role` (appends `"\n"`; with `*_think` it is appended to "You are a helpful
+  assistant." and the think instruction follows the user text, which conflicts with "No explanation needed",
+  so think runs are supplementary).
+- Frames: official = **every frame** of the 480p video (cv2, no sampling), sent as N JPEG images. Here the
+  480p mp4 goes as one video message with `nframes = 2·floor(n/2)` pinned per video (qwen-vl-utils needs an
+  even count ≤ n). Odd-length clips lose one frame (10 of 24 validation videos, 253 of 568 test videos;
+  2,164 of 2,174 validation frames and 40,810 of 41,063 test frames are sent). Pinning `nframes` in the
+  message disables every model-level sampling key, so there is no `video_sampling` block.
+  `scripts/check_quantiphy_frames.py` proves it on all 24 validation videos (and with `--quick`, merged config
+  only, on all 568 test videos): request frame i == mp4 frame `round(linspace(0, n-1, T))[i]`, the system prompt
+  is present, native fps is sent (`mm_processor_kwargs {fps, do_sample_frames: false}`), and conflicting
+  model-level `nframes=8` / `fps=1` / `max_frames=4` change nothing.
+  The client sends the frames at 480p (rounded to multiples of 32: 864×480, 480×480, 960×480). Validation frame counts:
+  min 30 / p50 69 / max 428 (test: 12 / 60 / 529).
+- Server-side resolution and tokens (`.venv-vllm/bin/python scripts/quantiphy_token_budget.py`, real
+  Cosmos3-Nano processor, the same HF call vLLM makes). The checkpoint's video processor caps
+  T·H·W at `longest_edge` = 25,165,824 px (≈12.3k video tokens), so long clips are **downscaled below 480p on the
+  server**. All frames are kept, e.g. 428 frames → 320×160, 72 frames at 864×480 → 768×416. Validation:
+  10/24 videos (69/158 questions) downscaled. Prompt tokens min 5,960 / p50 11,520 / max 12,925, so
+  **every question fits `max-model-len 16384`** (TP=1) as long as the server keeps the checkpoint pixel budget.
+  The TP=1 serving default `TP1_MM_CAPS` (video `max_pixels` 12,582,912) halves that budget: max 6,718 tokens,
+  but 21/24 videos (145/158 questions) are downscaled. For results comparable to the checkpoint defaults use TP=2 / 65536,
+  or TP=1 with `--mm-processor-kwargs none --max-model-len 16384`. Test split (checkpoint budget): prompt tokens
+  min 1,762 / p50 10,455 / p90 12,471 / max 14,234 (all ≤ 15,872), 207/568 videos (1,123/3,289 questions)
+  downscaled. With `TP1_MM_CAPS`: max 7,335, 531/568 videos (3,100 questions) downscaled.
+- **Server cap for QuantiPhy runs (eval stage, t013 on GPU 1).** Serve with the video budget raised to the
+  checkpoint value: `--mm-processor-kwargs '{"images_kwargs": {"max_pixels": 8388608}, "videos_kwargs":
+  {"max_pixels": 25165824}}'` (the image cap is irrelevant here; QuantiPhy sends no images) with
+  `--max-model-len 16384`. If that does not start at TP=1 (vLLM profiles one max-size video item), use the
+  largest cap in this table that starts, and quote the downscaled counts next to the score. "Downscaled" means
+  the server shrinks frames below the 480p the client sends (all frames are still sent). Max video tokens
+  per item = cap / 2,048. Counts are from `quantiphy_token_budget.py --video-max-pixels <cap>`.
+
+  | `videos_kwargs.max_pixels` | max video tokens / item | val prompt tokens p50 / max | val downscaled (videos / questions of 158) | test downscaled (videos / questions of 3,289) | test prompt max |
+  |---|---|---|---|---|---|
+  | 25,165,824 (checkpoint, = TP≥2 default) | 12,288 | 11,520 / 12,925 | 10/24 / **69** | 207/568 / 1,123 | 14,234 |
+  | 20,971,520 | 10,240 | 10,030 / 11,561 | 11/24 / **80** | 240/568 / 1,303 | 11,561 |
+  | 16,777,216 | 8,192 | 8,054 / 8,779 | 18/24 / **123** | 455/568 / 2,703 | 9,746 |
+  | 12,582,912 (`TP1_MM_CAPS` default) | 6,144 | 6,131 / 6,718 | 21/24 / **145** | 531/568 / 3,100 | 7,335 |
+
+  Only the 25,165,824 row matches the checkpoint (reference) preprocessing; any lower cap is a deviation to report.
+- Scoring (no judge): official `parse_number` (exact `value unit` match, else text after the last delimiter
+  `Final Answer:` / `Answer:` / `=>` / `=` / `:` / …, unit strings removed, last number, absolute value, NaN if
+  none), then `evaluator.py`: per question MRA = mean over θ ∈ {0.1, …, 0.9, 0.95} of `|ŷ−y|/y < 1−θ`
+  (unparseable → 0), category mean, **`Overall` = unweighted mean of 2S/2D/3S/3D** (×100). Also reported:
+  `bg_{C,S,X}` and `obj_{single,multiple}` (official 4-category means, `None` where a category is missing;
+  segmentation clips count as background X), `invalid_percentage` (blank + non-numeric + zero parses),
+  `n_unparsed`. No unit conversion: the official parser strips units, and the question fixes the unit.
+- Parity (`scripts/test_quantiphy_scoring.py`, offline; fetches the official files at `aa8daa7` once and checks
+  their sha256). `parse_number` is identical to the official function on 4,424 synthetic responses (0 mismatches).
+  `evaluate()` exports `*_quantiphy_official.csv`, and the unmodified official `evaluator.py` on that file gives the same
+  11 metrics on 5 synthetic prediction sets (0 mismatches). GT-as-prediction (`"<gt> m"`) → 100 in every
+  category. No-number replies → 0, random numbers → 4.3. Our scorer on the official `model_outputs/gpt-5.1.csv`
+  reproduces the published `mra_results` (48.24; S2 56.88, D2 35.41, S3 44.29, D3 56.38). End-to-end `run_suite`
+  against a mock OpenAI server: 158 requests with the expected system/user messages, and `score.json` is written.
+- **Official parser quirk (kept in the headline):** the exact-match regex has an unescaped `^` in `m/s^2`, and the
+  unit stripping removes `m`/`s` before `m/s^2`, so any reply written `X m/s^2` / `X cm/s^2` (or `X m/s2`
+  inside prose) parses as **2**. The questions themselves write `^2` (12/158 validation, 150/3,289 test
+  questions), so a model that echoes the unit loses those questions. `m/s²` and a bare `X m/s2` parse
+  correctly. The published GPT-5.1 file has no such 2s (and has negative values the current parser cannot produce),
+  so it came from an earlier parser version. Diagnostic `*_lenient` keys (`Overall_lenient`, `{cat}_lenient`,
+  `n_lenient_changed`) first rewrite the exponent (`/s^2` → `/s²`), then convert the reply's unit to the asked unit
+  (length / velocity / acceleration; e.g. `0.25 m` for a question in cm → 25). The unit used is the one written
+  directly after the number occurrence the official parser selected (`parse_number_span`, a span-tracking mirror
+  of `parse_number`; same value on all 4,424 test replies); a unit after another occurrence of the same number is
+  ignored (`0.5 m wide. Final Answer: 0.5` → 0.5, no conversion). Report `Overall` and give
+  `Overall_lenient` next to it.
+- Differences from the official run:
+  1. Frames go as one video, not N images: Qwen3-VL merges frame pairs temporally and gives timestamps; the
+     server pixel budget applies (above). Odd-length clips lose one frame.
+  2. No re-ask on unparseable replies (official: up to 5 attempts). With greedy T=0 / seed 1 the reply would
+     be the same; the question scores 0 as in `evaluator.py`.
+  3. `max_tokens` 8192 (paper: "around 500–2,048" for open models; replies are one line). Temperature 0 as in the paper.
+  4. `QuantiPhy_test` videos are our 480p transcodes (ffmpeg 4.4, libx264 crf 18, short side 480,
+     `-vsync passthrough`, frame count checked equal to the source), because the test repo ships original resolution
+     only (up to 3840×2160). On the 24 videos in both splits the transcodes have the same frame count and size as
+     the official 480p files (PSNR 26–52 dB). The validation key uses the official files.
+- Reference numbers (MRA ×100, columns 2S / 2D / 3S / 3D / Avg):
+  - Project-page **validation** leaderboard (159-question version; **comparable with `QuantiPhy`**):
+    Qwen3-VL-8B-Instruct 17.2 / 27.6 / 36.0 / 48.3 / **32.3**; Qwen3-VL-32B 38.1 / 39.7 / 39.8 / 43.0 / **40.2**;
+    Qwen3-VL-2B 25.0 / 28.6 / 16.0 / 39.1 / 27.2; InternVL-3.5-8B 30.0 avg; ChatGPT-5.1 56.9 / 34.6 / 45.6 / 56.4 / 48.4
+    (48.24 on the 158-question file in the repo); Gemini-2.5 Pro 46.4; human 55.6.
+  - Paper Table 1 (whole benchmark, **not comparable** with the validation split): Qwen3-VL-8B 26.0 / 47.8 / 35.1 /
+    46.3 / 38.8; Qwen3-VL-32B 35.8 / 51.6 / 43.2 / 53.4 / 46.0; Qwen3-VL-2B 29.0 avg; ChatGPT-5.1 53.1; Gemini-2.5 Pro
+    49.6; human 55.6. Qwen2.5-VL appears only in the page's prompt-ablation table (72B, video + prior 37.0 on the
+    161-question 2D subset). Cosmos-Reason and GPT-4o were not evaluated.
+- Data on disk (`$LMUData/QuantiPhy/`): `validation/` 6 MB, `test/` 510 MB (original resolution), `test_480p/`
+  157 MB, `official/aa8daa7…/` (test inputs), `competition/` (template). TSVs: `$LMUData/QuantiPhy.tsv` md5
+  `3bf945b7…`, `$LMUData/QuantiPhy_test.tsv` md5 `7704a7b6…` (columns `n_frames` = decord frame count,
+  `id_match`), each with a `<key>.manifest.json`.
+- Cache integrity (every load, under a file lock; `scripts/test_quantiphy_media.py`). A cache is never
+  accepted just because the CSV / parquet / folder exists:
+  1. the question table is checked against a pinned sha256 (`validation_dataset.csv` `4f29907c…`,
+     `test_dataset.parquet` `0eb2db32…`);
+  2. every referenced clip is checked against its HF Git-LFS sha256 and size at the pinned revision. The
+     per-file list comes from the HF API once (`<split>/.quantiphy_hf_manifest.json`), and its digest is pinned in
+     the code (`53556d53…` val, `dc9d9adf…` test), so later loads need no network;
+  3. hashes are cached with size + mtime (`.quantiphy_verified.json`), so a normal load is a stat check (~0.03 s).
+     `QUANTIPHY_VERIFY_MEDIA=1` re-hashes everything. A missing, empty, truncated or changed file is
+     re-downloaded (`hf_hub_download`, `force_download`) and re-checked; a second failure raises;
+  4. `test_480p/` transcodes are recorded (`.quantiphy_480p_manifest.json`: source sha256, ffmpeg settings
+     version, own sha256, frame count, size, mtime). They are re-made when missing, changed, made from another
+     source, or (with `QUANTIPHY_VERIFY_MEDIA=1`) when the hash differs;
+  5. the TSV is reused only if its manifest matches (build version, TSV md5, digest of the verified
+     (clip, sha256, frame count) set) **and** its own `video` / `n_frames` columns agree with the verified media;
+     otherwise it is rebuilt.
+  Tested on a temporary copy: 3 clips missing with table + folder present, an empty clip, a truncated clip, a
+  same-size corruption that keeps the mtime (caught only with `QUANTIPHY_VERIFY_MEDIA=1`), an edited
+  question table, an edited TSV, a TSV with a stale `n_frames` column but a matching md5, a missing manifest,
+  and deleted / truncated / corrupted / wrong-source transcodes. All are repaired, and rebuilt TSVs are
+  byte-identical.
 
 ## 7. Reproducibility caveats
 

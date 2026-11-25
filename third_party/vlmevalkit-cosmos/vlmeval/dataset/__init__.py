@@ -140,6 +140,7 @@ from .omtgbench import OMTGBench
 from .ost_bench import OSTDataset
 from .plotqa import PlotQA
 from .qbench_video import QBench_Video, QBench_Video_MCQ, QBench_Video_VQA
+from .quantiphy import QuantiPhy
 from .reasonmap_plus import ReasonMap_Plus
 from .refcoco import RefCOCODataset
 from .refspatial import RefSpatialDataset
@@ -396,6 +397,7 @@ VIDEO_DATASET += [ReVSI]
 VIDEO_DATASET += [PhysBench]
 VIDEO_DATASET += [VSTIBench]
 IMAGE_DATASET += [ThreeDSRBenchOfficial]
+VIDEO_DATASET += [QuantiPhy]
 
 TEXT_DATASET = [
     TextMCQDataset, IFBench, SGI_Bench_Wet_Experiment, SGI_Bench_Dry_Experiment,

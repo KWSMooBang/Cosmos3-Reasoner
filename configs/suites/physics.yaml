@@ -15,3 +15,5 @@ benchmarks:
   - physics/PhysBench                # 10,002 interleaved image/video MCQ, 8 frames/video, official prefix-match scorer; TP=1 image cap 6.9 MP (PROTOCOL.md §6, PhysBench); no judge
   # - physics/PhysBench_val          # 200-item val split (quick check / answer-format pilot)
   # - physics/PhysBench_native       # native image resolution; needs TP=2 / max-model-len 65536 (largest prompt 23.8k)
+  - physics/QuantiPhy                      # validation split (158 QA, public GT); official rule parser + MRA, no judge (PROTOCOL.md §6)
+  # - physics/QuantiPhy_test               # 3,289 QA, GT withheld: inference + official submission CSV only
