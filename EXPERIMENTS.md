@@ -31,6 +31,7 @@
 | run_id | task | 설정 | 결과 | 판단 |
 |---|---|---|---|---|
 | cosmos3_nano_nothink / ReVSI_64frame / full | t007 | 6,616문항, T=0, TP=1 GPU1, 16384, video max_pixels 20,971,520 (native 64×640×480), rev 45666784 | Overall 51.42 (공식 파서) / lenient 51.42 | keep — 논문 Qwen3-VL-8B 49.1 보다 +2.3, 32B 53.3 보다 −1.9 |
+- 문항별 결과 보관: /outputs/Cosmos3-Reasoner/results/t007_ReVSI_64frame_cosmos3_nano_nothink_full/ (*_revsi_score.xlsx: 문항·정답·예측·score)
 - summary.csv 원문: `cosmos3_nano_nothink,spatial,spatial,ReVSI_64frame,full,,,ok,51.42,51.42,2026-11-25T20:44:05,...`
 - 과제별: Obj.Cnt 35.80 / Abs.Dist 50.38 / Obj.Size 69.01 / Room Size 55.47 / Rel.Dist 59.05 / Rel.Dir 42.88 / Route Plan 47.31.
 - 파싱 fallback 0, unparsed 0, 빈 예측 0, API 실패 0, finish_reason 전부 stop. 평균 prompt 9,755 tok. 1.45 s/sample, 2 h 40 min, ≈2.9 GPU-h.
