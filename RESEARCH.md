@@ -24,6 +24,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - [ ] t008 Beyond3D 세팅 (진행 중, 사람 지시 2026-11-25) — 데이터 준비 + VLMEvalKit 포팅: HD-EPIC 원본 영상 ~115GB 필요(공유 폴더 로그인 가능성), CC-BY-NC, 9,000 MCQ(8 유형, 148 영상),
       비디오를 query 시점까지 잘라 448x448 1fps + 타임스탬프 오버레이로 전처리. 공식 코드는 lmms-eval 포크
 - [x] t007 ReVSI_64frame 전체 평가 (Nano nothink): Overall 51.42 (Qwen3-VL-8B 49.1 / 32B 53.3)
+- [ ] t009 SpaceCastBench_CoT 전체 평가 (Nano nothink, GPU 1, TP=1) — 진행 중
 - [ ] Qwen3-VL-8B/32B 베이스라인, 기술 보고서 Table 10 재현
 
 ## 결정
