@@ -15,11 +15,14 @@ Frames. The HF `video.zip` ships one pre-sampled mp4 per scene and frame budget
 video; indices in metadata/sampled_video_frame_idx.json). The question set differs per budget
 (questions whose objects are not visible in the N frames were removed), so every key reads its
 own parquet subset. Every frame of the N-frame mp4 must reach the model:
-  * VIDEO_LLM clients (CosmosReason*): the raw N-frame mp4 is sent as a video message WITHOUT
-    sampling keys; the client samples with the model-level `nframes`, which the data config sets
-    to N (`video_sampling.nframes`). qwen-vl-utils' linspace(0, N-1, N) on an N-frame video is
+  * VIDEO_LLM clients (CosmosReason*): the raw N-frame mp4 is sent as a video message that
+    carries `nframes=N`. CosmosReason._get_video_processing_kwargs uses the message's sampling
+    keys and then ignores ALL model-level sampling attributes (nframes/fps/max_pixels/
+    total_pixels/min_pixels/max_frames), so the budget stays N with any model config or direct
+    run.py use; resolution limits are qwen-vl-utils defaults (ReVSI frames are below the
+    per-frame cap, i.e. native size). qwen-vl-utils' linspace(0, N-1, N) on an N-frame video is
     the identity, so all N official frames are sent (scripts/check_revsi_frames.py proves it on
-    the real files).
+    the real files, also with a conflicting model-level setting).
   * image-frame clients: all N frames of the mp4 are decoded and sent as images (upstream
     VLMEvalKit's `len/(n+1)` stepping on an N-frame video selects the same N frames).
 
@@ -470,9 +473,9 @@ class ReVSI(VideoBaseDataset):
 
         message = []
         if video_llm:
-            # No sampling keys here on purpose: the client's model-level `nframes` (= N, from the
-            # data config's video_sampling) must apply. See module docstring.
-            message.append(dict(type='video', value=self.video_path(line['video'])))
+            # nframes pinned to the official budget: overrides (and disables) every model-level
+            # sampling attribute in CosmosReason*. See module docstring.
+            message.append(dict(type='video', value=self.video_path(line['video']), nframes=self.num_frames))
         else:
             for p in self.save_video_frames(line['video']):
                 message.append(dict(type='image', value=p))
