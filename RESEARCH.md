@@ -17,9 +17,10 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 ## 가설·백로그
 - [x] t001 vlmevalkit-cosmos subtree + 평가 클라이언트 venv + configs/scripts/docs 뼈대 (main cf328c1)
 - [x] t002 serving/ native vLLM 스크립트 (main 03cdb9c)
-- [ ] t003 스모크 테스트 (Nano, TP=1, GPU 1) — 진행 중
-- [ ] t004 ReVSI 구현 (진행 중) — HF 3dlg-hcvc/ReVSI 4.9GB, 64 frames, MRA+acc. 논문 Qwen3-VL-8B 49.1
-- [ ] t005 SpaceCast-Bench 구현 (리뷰 수정 중, 기본 모드 = CoT: 사람 결정, 공식 메인 실험과 동일) — 3,862 MCQ, 다중 시점 이미지 ≤8장, macro acc. 공식 평가기가 OpenAI 호환 API 지원
+- [x] t003 스모크 테스트 (Nano, TP=1, GPU 1) — 파이프라인 OK, vLLM 0.32 서빙 버그 2개 수정 (main 10c75f5)
+- [ ] t006 think 설정 결정 (TP=2, GPU 0,1): T=0 vs 공식 샘플링, nothink 대조, 평가 .venv main 에 재구성 — 진행 중
+- [x] t004 ReVSI 구현 (main e5d00aa) — HF 3dlg-hcvc/ReVSI 4.9GB, 64 frames, MRA+acc. 논문 Qwen3-VL-8B 49.1
+- [x] t005 SpaceCast-Bench 구현 (main 67817d2, 기본 모드 = CoT: 사람 결정, 공식 메인 실험과 동일) — 3,862 MCQ, 다중 시점 이미지 ≤8장, macro acc. 공식 평가기가 OpenAI 호환 API 지원
 - [ ] Beyond3D — 사람 결정 대기: HD-EPIC 원본 영상 ~115GB 필요(공유 폴더 로그인 가능성), CC-BY-NC, 9,000 MCQ(8 유형, 148 영상),
       비디오를 query 시점까지 잘라 448x448 1fps + 타임스탬프 오버레이로 전처리. 공식 코드는 lmms-eval 포크
 - [ ] Qwen3-VL-8B/32B 베이스라인, 기술 보고서 Table 10 재현
@@ -36,5 +37,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - 2026-11-25: 스모크 테스트는 GPU 1 만 사용, Qwen 베이스라인 없이 Nano 만 (사람 지시). harness launch.sh 는 GPU 를 스스로 고르므로
   스모크는 CUDA_VISIBLE_DEVICES=1 로 직접 실행한다. t002 main 병합·push 03cdb9c.
 
+- 2026-11-25: think 평가는 GPU 0,1 (TP=2, 65536) 사용 (사람 지시). t003·t004·t005 main 병합·push 67817d2.
+
 ## GPU 예산
-- 미정 (스모크 ≈ 2 GPU × 1h). 전체 벤치 실행 전 사람과 정한다.
+- 미정. 사용: t003 ≈1.0 GPU-h. t006 예상 ≈2 GPU × 1–2h. 전체 벤치 실행 전 사람과 정한다.
