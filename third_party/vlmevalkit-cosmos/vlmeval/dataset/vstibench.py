@@ -9,7 +9,10 @@ Ported from the official evaluation code (prompt, question types, answer parsing
     lmms_eval/models/vlm_3r.py load_video (np.linspace(0, n-1, 32, dtype=int) over the mp4).
 Data pinned to HF revision 0903eb0b0c9d03da730d43503c48302a1f3b412d (post-erratum labels, 2026-07-14:
 5,736 questions; the paper's Table 2 used the pre-erratum 6,042-question release @ 27ff0a2, which the
-authors say is not comparable).
+authors say is not comparable). The cache ($LMUData/VSTIBench/, VSTIBench.tsv) is validated on every load
+against $LMUData/VSTIBench.manifest.json (revision, pinned file hashes, TSV md5, size + sha256 of every
+mp4) and rebuilt on mismatch (validate_cache / build_cache). evaluate() reports evaluation_scope
+('full' only for the exact release) and headline_partial; Overall on a subset is not the release metric.
 
 Frames. VSTI-Bench videos are the full-length ScanNet val mp4s (640x480, 24 fps). The official eval
 samples 32 frames uniformly. The question texts refer to "frame k of 32".
@@ -37,6 +40,7 @@ import math
 import os
 import re
 import tarfile
+import warnings
 from collections import OrderedDict
 
 import numpy as np
@@ -49,6 +53,11 @@ from .video_base import VideoBaseDataset
 
 HF_REPO = 'Journey9ni/vstibench'
 HF_REVISION = '0903eb0b0c9d03da730d43503c48302a1f3b412d'
+# @ HF_REVISION: ScanNet.tar.gz sha256 = its LFS oid; test.json (not LFS) sha256 of the file whose git blob id
+# equals the Hub's (bc83433ba242cfb7a6651f237f61608b3193ce38).
+TAR_SHA256 = '33339aa0348096558a95e780c997c84baef8e50d1f40b62f31f976525ab9f3cb'
+TEST_JSON_SHA256 = '7c0780c0f03355446c958123f013a11773130d83bf12001936210bafffd0ae94'
+BUILD_VERSION = 1
 NUM_FRAMES = 32
 
 # --- verbatim from vstibench.yaml (lmms_eval_specific_kwargs.default) + utils.vsibench_doc_to_text ---
@@ -298,13 +307,6 @@ def _sha256(path, bufsize=1 << 24):
     return h.hexdigest()
 
 
-def _lfs_oids():
-    """{filename: sha256} of the LFS files at HF_REVISION (from the Hub API)."""
-    from huggingface_hub import HfApi
-    info = HfApi().dataset_info(HF_REPO, revision=HF_REVISION, files_metadata=True)
-    return {s.rfilename: s.lfs.sha256 for s in info.siblings if s.lfs is not None}
-
-
 def _download(root, patterns):
     from huggingface_hub import snapshot_download
     snapshot_download(HF_REPO, repo_type='dataset', revision=HF_REVISION, local_dir=root,
@@ -342,6 +344,131 @@ def _extract_videos(tar_path, root, needed):
     return n
 
 
+def _md5(path):
+    import hashlib
+    h = hashlib.md5()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _ensure_file(root, name, sha256):
+    """root/name present with the pinned sha256; otherwise delete and re-download once."""
+    path = os.path.join(root, name)
+    for _ in range(2):
+        if not os.path.exists(path):
+            _download(root, [name])
+        if _sha256(path) == sha256:
+            return path
+        os.remove(path)
+        meta = os.path.join(root, '.cache', 'huggingface', 'download', name + '.metadata')
+        if os.path.exists(meta):
+            os.remove(meta)
+    raise RuntimeError(f'{path}: sha256 != pinned {sha256} @ {HF_REVISION} after re-download')
+
+
+def _build_tsv_frame(docs):
+    df = pd.DataFrame(docs)
+    counts = df['question_type'].value_counts().to_dict()
+    if counts != RELEASE_COUNTS:
+        raise RuntimeError(f'test.json counts {counts} != release counts @ {HF_REVISION}')
+    if df['id'].duplicated().any():
+        raise RuntimeError('duplicate ids in test.json')
+    return pd.DataFrame({
+        'index': df['id'].astype(int),
+        'id': df['id'].astype(int),
+        'question_type': df['question_type'],
+        'question': df['question'],
+        'options': [json.dumps(o) if isinstance(o, list) else '' for o in df['options']],
+        'mc_answer': [a if isinstance(a, str) else '' for a in df['mc_answer']],
+        'ground_truth': df['ground_truth'].astype(str),
+        # `answer` = what the question is scored against (letter for MCA, number for NA)
+        'answer': [a if q in MCA_QUESTION_TYPES else g for q, a, g in
+                   zip(df['question_type'], df['mc_answer'], df['ground_truth'].astype(str))],
+        'video': df['video_path'],
+    })
+
+
+def n_zero_targets(question_types, ground_truths) -> int:
+    """Numeric questions with target 0 (the official MRA would raise ZeroDivisionError; 0 in the release)."""
+    return int(sum(1 for q, g in zip(question_types, ground_truths)
+                   if q in NA_QUESTION_TYPES and to_float(g) == 0))
+
+
+def build_cache(root, tsv, manifest):
+    """Pinned test.json + ScanNet.tar.gz -> extracted mp4s, TSV and manifest (atomic writes)."""
+    if os.path.exists(manifest):
+        os.remove(manifest)
+    test_json = _ensure_file(root, 'test.json', TEST_JSON_SHA256)
+    docs = json.load(open(test_json))
+    videos = sorted({d['video_path'] for d in docs})
+    tar_path = _ensure_file(root, 'ScanNet.tar.gz', TAR_SHA256)
+    n = _extract_videos(tar_path, root, videos)
+    missing = _missing_videos(root, videos)
+    if missing:
+        raise RuntimeError(f'{len(missing)} videos missing after extraction ({n} extracted), e.g. {missing[:3]}')
+    out = _build_tsv_frame(docs)
+    tmp = f'{tsv}.{os.getpid()}.tmp.tsv'
+    out.to_csv(tmp, sep='\t', index=False)
+    os.replace(tmp, tsv)
+    man = dict(
+        hf_repo=HF_REPO, hf_revision=HF_REVISION, build_version=BUILD_VERSION,
+        test_json_sha256=TEST_JSON_SHA256, tar_sha256=TAR_SHA256, tsv_md5=_md5(tsv),
+        n_questions=len(out), n_zero_target=n_zero_targets(out['question_type'], out['ground_truth']),
+        videos={v: [os.path.getsize(os.path.join(root, v)), _sha256(os.path.join(root, v))] for v in videos})
+    tmp = f'{manifest}.{os.getpid()}.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(man, f, indent=1)
+    os.replace(tmp, manifest)
+
+
+def validate_cache(root, tsv, manifest):
+    """None if the cache is the pinned release, else a short reason.
+
+    Checks: manifest pins (repo, revision, build version, file hashes), test.json sha256, TSV md5, the
+    video set equals the one test.json references, every video's size and sha256.
+    """
+    if not os.path.exists(manifest):
+        return 'no manifest'
+    try:
+        man = json.load(open(manifest))
+    except Exception as e:  # noqa: BLE001
+        return f'unreadable manifest ({e})'
+    pins = dict(hf_repo=HF_REPO, hf_revision=HF_REVISION, build_version=BUILD_VERSION,
+                test_json_sha256=TEST_JSON_SHA256, tar_sha256=TAR_SHA256)
+    for k, v in pins.items():
+        if man.get(k) != v:
+            return f'manifest {k}={man.get(k)!r} != {v!r}'
+    test_json = os.path.join(root, 'test.json')
+    if not os.path.exists(test_json) or _sha256(test_json) != TEST_JSON_SHA256:
+        return 'test.json missing or sha256 mismatch'
+    if not os.path.exists(tsv) or _md5(tsv) != man.get('tsv_md5'):
+        return 'TSV missing or md5 mismatch'
+    videos = sorted({d['video_path'] for d in json.load(open(test_json))})
+    if sorted(man.get('videos', {})) != videos:
+        return 'manifest video list != videos referenced by test.json'
+    for v in videos:
+        p = os.path.join(root, v)
+        size, sha = man['videos'][v]
+        if not os.path.isfile(p) or os.path.getsize(p) != size:
+            return f'{v}: missing or size mismatch'
+        if _sha256(p) != sha:
+            return f'{v}: sha256 mismatch'
+    return None
+
+
+def evaluation_scope(indices, question_types, release_indices) -> dict:
+    """'full' iff the scored rows are exactly the release (5,736 unique ids, all 9 types at release counts)."""
+    idx = list(indices)
+    counts = pd.Series(list(question_types)).value_counts().to_dict()
+    n_dup = len(idx) - len(set(idx))
+    full = (n_dup == 0 and set(idx) == set(release_indices) and len(idx) == sum(RELEASE_COUNTS.values())
+            and counts == RELEASE_COUNTS)
+    return dict(evaluation_scope='full' if full else 'subset', headline_partial=int(not full),
+                n_scored=len(idx), n_duplicate_rows=n_dup, n_types=len(counts))
+
+
 class VSTIBench(VideoBaseDataset):
     # 'MCQ' (official lmms-eval: generate_until): keeps CosmosReason*.use_custom_prompt() False so
     # the official dataset prompt is used for every question (same choice as VsiBench / ReVSI).
@@ -364,54 +491,17 @@ class VSTIBench(VideoBaseDataset):
 
     def prepare_dataset(self, dataset):
         root = vstibench_root()
-        test_json = os.path.join(root, 'test.json')
-        tar_path = os.path.join(root, 'ScanNet.tar.gz')
-        sentinel = os.path.join(root, '.videos.extracted')
+        tsv = os.path.join(LMUDataRoot(), f'{dataset}.tsv')
+        manifest = os.path.join(LMUDataRoot(), f'{dataset}.manifest.json')
         os.makedirs(root, exist_ok=True)
-
         with portalocker.Lock(os.path.join(root, '.prepare.lock'), 'w', timeout=7200):
-            if not os.path.exists(test_json):
-                _download(root, ['test.json', 'README.md', 'erratum/*'])
-            docs = json.load(open(test_json))
-            videos = sorted({d['video_path'] for d in docs})
-            if not os.path.exists(sentinel) or _missing_videos(root, videos):
-                if os.path.exists(sentinel):
-                    os.remove(sentinel)
-                if not os.path.exists(tar_path):
-                    _download(root, ['ScanNet.tar.gz'])
-                oids = _lfs_oids()
-                for fn, p in (('ScanNet.tar.gz', tar_path), ('test.json', test_json)):
-                    if fn in oids and _sha256(p) != oids[fn]:
-                        raise RuntimeError(f'{p}: sha256 != LFS oid {oids[fn]} @ {HF_REVISION}; delete and retry')
-                _extract_videos(tar_path, root, videos)
-                missing = _missing_videos(root, videos)
-                if missing:
-                    raise RuntimeError(f'{len(missing)} videos missing after extraction, e.g. {missing[:3]}')
-                with open(sentinel, 'w') as f:
-                    f.write(f'{len(videos)}\n')
-
-            tsv = os.path.join(LMUDataRoot(), f'{dataset}.tsv')
-            if not os.path.exists(tsv):
-                df = pd.DataFrame(docs)
-                counts = df['question_type'].value_counts().to_dict()
-                if counts != RELEASE_COUNTS:
-                    raise RuntimeError(f'test.json counts {counts} != release counts @ {HF_REVISION}')
-                out = pd.DataFrame({
-                    'index': df['id'].astype(int),
-                    'id': df['id'].astype(int),
-                    'question_type': df['question_type'],
-                    'question': df['question'],
-                    'options': [json.dumps(o) if isinstance(o, list) else '' for o in df['options']],
-                    'mc_answer': [a if isinstance(a, str) else '' for a in df['mc_answer']],
-                    'ground_truth': df['ground_truth'].astype(str),
-                    # `answer` = what the question is scored against (letter for MCA, number for NA)
-                    'answer': [a if q in MCA_QUESTION_TYPES else g for q, a, g in
-                               zip(df['question_type'], df['mc_answer'], df['ground_truth'].astype(str))],
-                    'video': df['video_path'],
-                })
-                tmp = f'{tsv}.{os.getpid()}.tmp.tsv'
-                out.to_csv(tmp, sep='\t', index=False)
-                os.replace(tmp, tsv)
+            problem = validate_cache(root, tsv, manifest)
+            if problem is not None:
+                print(f'[{dataset}] cache invalid ({problem}); rebuilding')
+                build_cache(root, tsv, manifest)
+                problem = validate_cache(root, tsv, manifest)
+                if problem is not None:
+                    raise RuntimeError(f'{dataset}: cache still invalid after rebuild: {problem}')
         return dict(root=root, data_file=tsv)
 
     def video_path(self, video):
@@ -472,6 +562,11 @@ class VSTIBench(VideoBaseDataset):
         for c in ('mc_answer', 'options'):
             data[c] = data[c].where(data[c].notna(), '')
         scored, summary, table = score_dataframe(data)
+        scope = evaluation_scope(data['index'], data['question_type'], meta.index)
+        summary.update(scope)
+        summary['n_zero_target'] = n_zero_targets(data['question_type'], data['ground_truth'])
+        if scope['headline_partial']:
+            warnings.warn(f'[{self.dataset_name}] partial input ({scope}); Overall is not the release metric')
 
         score_file = get_intermediate_file_path(eval_file, '_vstibench_score', 'xlsx')
         table_file = get_intermediate_file_path(eval_file, '_acc', 'csv')
