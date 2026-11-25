@@ -148,7 +148,9 @@ def main() -> None:
 
     # 1. GT as prediction
     s = compare('gt', [r['answer'] for r in labels], labels, label_path)
-    bad = {k: v for k, v in s.items() if isinstance(v, float) and not k.startswith('lmms') and v != 100.0}
+    bad = {k: v for k, v in s.items() if isinstance(v, float) and not k.startswith('lmms') and k != 'format_gap' and v != 100.0}
+    if s['format_gap'] != 0.0:
+        bad['format_gap'] = s['format_gap']
     if bad:
         fails.append(f'gt != 100: {bad}')
     s = compare('gt_val', [r['answer'] for r in val], val, val_path)
