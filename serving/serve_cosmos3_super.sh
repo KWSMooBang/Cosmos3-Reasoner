@@ -7,6 +7,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 MODEL_DEFAULT="nvidia/Cosmos3-Super"
 TP_DEFAULT=4
+TP_ALLOWED="$TP_ALLOWED_32B"
 SCRIPT_NOTE="Cosmos3-Super: TP must be 4 or 8 (8 KV heads, ~66 GB weights). TP=4 -> 32768, TP=8 -> 128000."
 default_max_model_len() { max_len_32b "$2"; }
 

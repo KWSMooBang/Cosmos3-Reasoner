@@ -6,28 +6,47 @@ recipe is only recorded as a reference (see the docker reference section below).
 
 | file | purpose |
 |---|---|
-| `setup_vllm_env.sh` | builds `<repo>/.venv-vllm` (uv, Python 3.12, `vllm==0.32.0+cu129`, torch `2.13.0+cu129`) and checks the model registry |
-| `serve_cosmos3_nano.sh` | `nvidia/Cosmos3-Nano`, default TP=1 (`--tp 2` supported) |
-| `serve_cosmos3_super.sh` | `nvidia/Cosmos3-Super`, default TP=4 (`--tp 8` supported) |
+| `setup_vllm_env.sh` | builds `<main checkout>/.venv-vllm` (uv, Python 3.12, `vllm==0.32.0+cu129`, torch `2.13.0+cu129`, wheels only) and checks it |
+| `requirements-vllm.lock` | the exact resolved package set (197 packages incl. pip/setuptools, `uv pip freeze`); `setup_vllm_env.sh --from-lock` reinstalls it |
+| `serve_cosmos3_nano.sh` | `nvidia/Cosmos3-Nano`, default TP=1 (TP ∈ {1,2,4,8}) |
+| `serve_cosmos3_super.sh` | `nvidia/Cosmos3-Super`, default TP=4 (TP ∈ {4,8}) |
 | `serve_qwen3vl.sh` | `Qwen/Qwen3-VL-8B-Instruct` (default, TP=1) / `Qwen/Qwen3-VL-32B-Instruct` (TP=4) |
-| `wait_healthy.sh` | polls `GET /v1/models` until the server is ready or a timeout hits |
+| `wait_healthy.sh` | waits until `GET /v1/models` lists the expected model (and the port belongs to our server) |
 | `download_weights.sh` | `hf download` with only the files vLLM reads (needs approval for the big models) |
-| `_common.sh` | shared flag parsing / launcher (sourced, not run) |
+| `_common.sh`, `_portcheck.py` | shared flag parsing / launcher (sourced), `/proc`-based port-owner check (no `ss` in this container) |
 
 ## Quick start
 
 ```bash
-serving/setup_vllm_env.sh                       # once; ~11 GB venv, wheels only, ~10 min
+serving/setup_vllm_env.sh --from-lock           # once; ~11 GB venv, wheels only, ~10 min
 # weights must already be in $HF_HOME (/cache/huggingface); the serve scripts set HF_HUB_OFFLINE=1
 serving/download_weights.sh --model nvidia/Cosmos3-Nano --revision 45666784803b3a7ad577e0def405f9afcc3bddb2 --dry-run
 
 serving/serve_cosmos3_nano.sh --gpus 0 --port 8080 --revision 45666784803b3a7ad577e0def405f9afcc3bddb2 \
   > logs/nano.log 2>&1 &
-serving/wait_healthy.sh --port 8080 --pid $! --timeout 1800
+serving/wait_healthy.sh --model nvidia/Cosmos3-Nano --port 8080 --pid $! --timeout 1800
 ```
 
-Every serve script takes the same options; flags override env vars. Run any of them with `--help`.
-`--dry-run` prints the exact `vllm serve` command. Anything after `--` goes to `vllm serve` verbatim.
+### setup_vllm_env.sh
+
+- Default mode resolves `vllm==$VLLM_VERSION+$VLLM_CUDA` fresh and rewrites `requirements-vllm.lock`.
+  `--from-lock` installs exactly the lock with `uv pip sync`. `--check-only` only runs the checks.
+- Installs use `--only-binary :all:`, so an sdist that would need compiling fails instead of building.
+  `uv pip sync --dry-run` of the lock into an empty venv resolves all 197 packages as wheels. The lock keeps `setuptools`: torch imports it at runtime, and `uv pip sync` removes anything unlisted.
+- The checks are CPU only and fail on any mismatch. They require:
+  - Python == `--python` (3.12);
+  - `vllm` == `X.Y.Z+cu129` exactly;
+  - `torch` == vLLM's own `torch==` pin + `+cu129` (2.13.0+cu129);
+  - `torch.version.cuda` == 12.9;
+  - both `Cosmos3ForConditionalGeneration` and `Qwen3VLForConditionalGeneration` in the registry;
+  - the `vllm serve` entrypoint modules import cleanly.
+- `--force` deletes the venv first, but only if the path resolves under `/workspace/Cosmos3-Reasoner`, has a
+  `pyvenv.cfg`, and is not a symlink.
+
+### Serve scripts
+
+All serve scripts take the same options; flags override env vars. Run any of them with `--help`.
+`--dry-run` validates the options and prints the exact `vllm serve` command.
 
 | option | env | default |
 |---|---|---|
@@ -35,14 +54,36 @@ Every serve script takes the same options; flags override env vars. Run any of t
 | `--revision` | `REVISION` | (main) |
 | `--port` / `--host` | `PORT` / `HOST` | 8080 / 127.0.0.1 |
 | `--tp` | `TP` | Nano 1, Super 4, Qwen3-VL-8B 1, -32B 4 |
-| `--gpus` | `CUDA_VISIBLE_DEVICES` | `0..TP-1` |
+| `--gpus` | `CUDA_VISIBLE_DEVICES` | unset → `0..TP-1` |
 | `--max-model-len` | `MAX_MODEL_LEN` | see the memory budget table |
 | `--gpu-mem-util` | `GPU_MEM_UTIL` | 0.9 |
+| `--max-num-seqs` | `MAX_NUM_SEQS` | vLLM default |
 | `--video-frames` / `--video-fps` | `VIDEO_NUM_FRAMES` / `VIDEO_FPS` | -1 / -1 (reference: all frames, native fps) |
 | `--mm-processor-kwargs` | `MM_PROCESSOR_KWARGS` | TP=1 8B-class: pixel caps (below); otherwise none. `none` disables them |
 | `--fp8` | `FP8=1` | off |
-| `--allow-download` | `ALLOW_DOWNLOAD=1` | off (sets `HF_HUB_OFFLINE=1`) |
+| `--allow-download` | `ALLOW_DOWNLOAD=1` | off: `HF_HUB_OFFLINE=1`. On: `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` are unset |
 | `--venv` | `VLLM_VENV` | `<main checkout>/.venv-vllm` (worktrees reuse it) |
+
+Validation, done before anything starts:
+- **TP and GPUs.** TP must be in the model's allowed set. The GPU mask must be non-empty, contain distinct
+  indices, and have exactly TP entries. An *unset* `CUDA_VISIBLE_DEVICES` means 0..TP-1; a set-but-*empty*
+  one is an error.
+- **Values.** Ports, lengths, utilisation, fps and frames are checked as numbers before they go into the
+  command or the JSON. `--mm-processor-kwargs` must be a JSON object. An option with no value is an error.
+- **Before launch** (skipped by `--dry-run`): the GPU indices must exist (`nvidia-smi -L`), and the port must be
+  free (`/proc/net/tcp*`), so an old server can't answer the health check.
+
+Extra vLLM args go after `--`. Parallelism flags (`--tensor-parallel-size`/`-tp`, `-pp`, `-dp`, also as
+`--flag=value`) and flags the script manages (`--port`, `--host`, `--max-model-len`, `--revision`,
+`--gpu-memory-utilization`, `--mm-processor-kwargs`, `--media-io-kwargs`) are refused there. (The old
+`EXTRA_ARGS` env var is gone; it was word-split unquoted.)
+
+### wait_healthy.sh
+
+`--model ID` is required. Ready means `/v1/models` parses as JSON and `data[].id` contains exactly ID; an empty
+list, another model or a prefix match keeps waiting. With `--pid`, each poll first checks the PID is alive (exit 2
+if it died). On success it also checks via `/proc` that the PID or a child owns the listening socket (exit 2 if
+another process does). Exit codes: 0 ready, 1 timeout, 2 server died / foreign port owner, 3 bad arguments.
 
 Fixed flags, taken from the reference recipe: `--async-scheduling --enable-chunked-prefill --allowed-local-media-path /
 --mm-processor-cache-gb 0 --mm-encoder-tp-mode data --media-io-kwargs '{"video": {"num_frames": -1, "fps": -1}}'`,
@@ -103,8 +144,9 @@ Why 0.32.0 and not the newest release (0.34.0): **driver 550 needs a CUDA 12 bui
   by vLLM 0.34, exists only as cu126/cu130.)
 - So 0.32.0+cu129 is the newest vLLM that installs as **pure wheels** (no CUDA source build) for CUDA 12. It also
   includes the later Cosmos3 fixes, e.g. the cosmos3_edge weight-filtering branch the docker image was built from.
-  To stay closer to the reference image, `VLLM_VERSION=0.26.0 serving/setup_vllm_env.sh --force` also works
-  (cu129 wheels exist).
+  To stay closer to the reference image, use `VLLM_VERSION=0.26.0 serving/setup_vllm_env.sh --force
+  --venv /workspace/Cosmos3-Reasoner/.venv-vllm-0.26 --lock /tmp/requirements-vllm-0.26.lock`. cu129 wheels
+  exist for it. Pass `--lock` elsewhere so the committed 0.32 lock isn't overwritten.
 
 ## Driver 550 / CUDA 12.4: status and risks
 
@@ -165,7 +207,9 @@ or `--fp8` (see below), or TP=2.
 (=12,288 tokens at 32×32×2). Either one alone would fill a 16k context. At TP=1 the scripts pass
 `--mm-processor-kwargs '{"images_kwargs": {"max_pixels": 8388608}, "videos_kwargs": {"max_pixels": 12582912}}'`.
 That caps one image at ≤8,192 tokens and one video at ≤6,144 tokens. vLLM routes these scoped keys
-(`Qwen2VLProcessingInfo._get_vision_size`: `max_pixels` overrides `size.longest_edge`). This changes the inputs
+(`Qwen2VLProcessingInfo._get_vision_size`: `max_pixels` overrides `size.longest_edge`). I checked this on CPU
+with vLLM 0.32's processor and the Nano config/processor files (no weights). An 8192×8192 image goes from 16,384
+to 8,100 tokens, and a 600-frame 3840×2160 video from 9,600 to 5,400 tokens. This changes the inputs
 for very large images/videos compared with the reference (TP≥2 keeps the checkpoint defaults), so report it with
 any TP=1 result, or pass `--mm-processor-kwargs none`. The frame cap (`--video-frames`) is left at the
 reference's -1: the pixel budget already bounds video tokens, because vLLM shrinks per-frame resolution as the
@@ -184,9 +228,17 @@ max-model-len.
 
 Repo layout from the HF API at main: Nano `transformer/` 30.35 GB, `vision_encoder/` 1.15 GB, `vae/` 1.41 GB,
 `sound_tokenizer/` 1.99 GB. Super `transformer/` 128.04 GB, `vision_encoder/` 1.19 GB, plus the same VAE/sound files.
-`download_weights.sh` passes `--include "*.json" "*.txt" "transformer/*" "vision_encoder/*" "text_tokenizer/*"`,
-which skips the VAE and sound tokenizer. `transformer/` shards mix both towers (vLLM drops the generation tensors
-at load time), so a download is still ≈31.5 GB for Nano and ≈129 GB for Super. Pin `--revision`
+`download_weights.sh` passes one `--include` per pattern. (`hf download` takes **one** value per `--include`;
+extra words become literal FILENAMES, which broke the first version of this script.) The patterns are:
+- root files: `config.json generation_config.json chat_template.json preprocessor_config.json
+  video_preprocessor_config.json tokenizer.json tokenizer_config.json vocab.json merges.txt`
+- directories: `transformer/*` and `vision_encoder/*`
+
+That is enough to load the model. On CPU, `AutoConfig` (→ `Cosmos3OmniConfig`, arch `Cosmos3ForConditionalGeneration`)
+and `AutoProcessor` (→ `Qwen3VLProcessor` with chat template) load from exactly these root files, so
+`text_tokenizer/`, `vae/`, `sound_tokenizer/`, `assets/`, `images/` and `scheduler/` are skipped.
+`hf download --dry-run` at the Nano revision lists **20 files, 31.5 GB**. `transformer/` shards mix both towers
+(vLLM drops the generation tensors at load time), so Super is still ≈129 GB. Pin `--revision`
 (Nano `45666784803b3a7ad577e0def405f9afcc3bddb2`, Super `73d5746645961a0ec9607123a003bd9c1f8a0282`).
 
 ## Docker reference (not usable on this machine)

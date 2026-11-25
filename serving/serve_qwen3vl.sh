@@ -14,7 +14,7 @@ for ((i = 1; i <= $#; i++)); do
   if [[ "${!i}" == "--model" ]]; then j=$((i + 1)); _model="${!j:-}"; fi
   [[ "${!i}" == "--" ]] && break
 done
-if is_32b "$_model"; then TP_DEFAULT=4; else TP_DEFAULT=1; fi
+if is_32b "$_model"; then TP_DEFAULT=4; TP_ALLOWED="$TP_ALLOWED_32B"; else TP_DEFAULT=1; TP_ALLOWED="$TP_ALLOWED_8B"; fi
 SCRIPT_NOTE="Qwen3-VL: --model Qwen/Qwen3-VL-8B-Instruct (TP=1 default) or Qwen/Qwen3-VL-32B-Instruct (TP=4 default)."
 default_max_model_len() { if is_32b "$1"; then max_len_32b "$2"; else max_len_8b "$2"; fi; }
 default_mm_processor_kwargs() { if is_32b "$1"; then echo none; else mm_caps_8b "$1" "$2"; fi; }
