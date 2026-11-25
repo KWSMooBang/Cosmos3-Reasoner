@@ -1,0 +1,4 @@
+{
+  "_source": "OpenCompass TSV; generic ImageMCQDataset (all 14 BLINK subtasks; NVIDIA's depth/spatial-only BlinkDepth/BlinkSpatial are stubs)",
+  "class": "ImageMCQDataset"
+}

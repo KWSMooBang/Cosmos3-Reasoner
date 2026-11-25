@@ -1,0 +1,39 @@
+# 3D spatial / perception suite. Every key is in vlmeval SUPPORTED_DATASETS and is served by a
+# non-stub class (validated by scripts/check_suites.py). Judges: PROTOCOL.md §6.
+name: spatial
+model: cosmos3_nano_nothink
+concurrency: 2
+run:
+  api_nproc: 8                     # value used in cosmos_eval/manifest.json
+  judge_nproc: 4
+  judge: exact_matching            # MCQ / rule-scored benches: no LLM judge
+benchmarks:
+  # --- video (frame settings in configs/data/spatial/<bench>.json) ---
+  - spatial/VSI-Bench
+  - spatial/VSI-Bench-Debiased
+  - spatial/MMSIVideoBench
+  - spatial/STI-Bench
+  - spatial/SiteBenchVideo
+  - spatial/DSRBench
+  # --- image / multi-view MCQ ---
+  - spatial/MMSIBench_wo_circular
+  - spatial/OmniSpatialBench
+  - spatial/ViewSpatialBench
+  - spatial/MindCubeBench_raw_qa
+  - spatial/SiteBenchImage
+  - spatial/EmbSpatialBench
+  - spatial/ERQA
+  - spatial/3DSRBench
+  - spatial/BLINK
+  - spatial/MMVP
+  # --- image VQA / numeric / pointing (rule-based scoring inside the dataset) ---
+  - spatial/SparBench
+  - spatial/Spatial457
+  - spatial/RefSpatial
+  - spatial/RoboSpatialHome
+  - spatial/Omni3DBench
+  - spatial/CoreCognition          # exact_matching -> CoreCognition's built-in non-LLM matcher
+  - key: spatial/QSpatial_plus
+    judge: null                    # QSpatial switches to LLM extraction whenever a judge is given
+  - key: spatial/QSpatial_scannet
+    judge: null

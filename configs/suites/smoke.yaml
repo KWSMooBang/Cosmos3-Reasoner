@@ -1,0 +1,14 @@
+# Smoke test: one small image bench + a VSI-Bench subset, both sample-limited.
+# Scores from this suite are NOT benchmark results (random subset; see README "Sample limit").
+name: smoke
+model: cosmos3_nano_nothink        # override with --model
+concurrency: 1
+run:                               # run.py flags for every bench (overridable per entry)
+  api_nproc: 4
+  judge_nproc: 4
+  judge: exact_matching            # MCQ: rule-based answer extraction, no LLM judge
+benchmarks:
+  - key: spatial/MindCubeBench_tiny_raw_qa
+    sample_limit: 20
+  - key: spatial/VSI-Bench         # 32 frames (configs/data/spatial/VSI-Bench.json)
+    sample_limit: 20

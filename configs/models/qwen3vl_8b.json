@@ -1,0 +1,22 @@
+{
+  "_note": "Baseline. Same client class/settings as the Cosmos reproduction default (NVIDIA's vlmeval/config.py also drives Qwen3-VL via CosmosReason2); model_family qwen3 (same Qwen-style point prompts as 'cr'). Serve with vLLM on COSMOS_API_BASE.",
+  "_hf_model": "Qwen/Qwen3-VL-8B-Instruct",
+  "model_family": "qwen3",
+  "model_key": "qwen3vl_8b",
+  "class": "CosmosReason2",
+  "defaults": {
+    "api_base": "${COSMOS_API_BASE}",
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "max_tokens": 8192,
+    "model": "Qwen/Qwen3-VL-8B-Instruct",
+    "presence_penalty": null,
+    "retry": 10,
+    "seed": 1,
+    "temperature": 0,
+    "timeout": 600,
+    "verbose": false
+  },
+  "benchmarks": {}
+}

@@ -1,0 +1,6 @@
+{
+  "_source": "EASI-Leaderboard-Data TSV (lmms-lab-si); vlmeval class MMSIVideoBench. 64 frames: kit variant MMSIVideoBench_64frame; paper's Sufficient-Coverage policy is 300 frames (kit variant _300frame) - too long for the 24 GB-GPU serving budget, see TODO.md",
+  "_frames": "MMSIVideoBench.build_prompt never sends a video message: it subsamples the provided per-clip frame lists with the DATASET's nframe (global linspace over all segments) and sends them as images, so frames are set here and there is no video_sampling block (client-side sampling is not used). Verified by scripts/check_video_sampling.py.",
+  "class": "MMSIVideoBench",
+  "nframe": 64
+}

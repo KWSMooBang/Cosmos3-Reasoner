@@ -1,0 +1,4 @@
+{
+  "_source": "EASI-Leaderboard-Data TSV (lmms-lab-si); vlmeval class SparBench (upstream VLMEvalKit sparbench.py; NVIDIA's spar_bench.SPARBench is a stub)",
+  "class": "SparBench"
+}
