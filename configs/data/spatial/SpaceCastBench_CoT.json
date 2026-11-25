@@ -1,0 +1,5 @@
+{
+  "_source": "HF hongxingli/SpaceCast-Bench @ 45be662c (same TSV and images as SpaceCastBench); vlmeval class SpaceCastBench (local addition). Official evaluator ZJU-REAL/SpaceCast-Bench @ 6696e5eb, --mode cot (the official README calls cot the main experiment).",
+  "_images": "Same images and prompt token budget as SpaceCastBench.json; at max-model-len 16384 an 8-view question leaves ~6.5k tokens for the reply (vLLM 0.32 clamps max_tokens to the remaining context).",
+  "class": "SpaceCastBench"
+}
