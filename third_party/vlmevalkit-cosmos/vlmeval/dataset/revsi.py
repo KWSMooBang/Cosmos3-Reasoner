@@ -33,12 +33,13 @@ Differences from the official code (all documented in PROTOCOL.md):
     1,057 of them are in the 64-frame subset).
   * TYPE = 'MCQ' (official: 'Video-VQA') so that CosmosReason*.use_custom_prompt() returns False
     and the official dataset prompt is used (same choice as VsiBench in this kit).
-  * Scoring: `*_official` columns reproduce the official parser bit-for-bit (first
-    whitespace token, rstrip('.'), case-insensitive letter match / float + MRA). The headline
-    columns additionally fall back to the kit's rule extractors (can_match_option /
-    can_match_na) ONLY when the official parse fails (not a letter / not a finite number), e.g.
-    "(B)", "Answer: 3", "3m", "</think> about 2.5 meters". Whenever the official parse succeeds
-    both scores are identical.
+  * Scoring: the headline keys (`Overall`, `<task>`) are the official parser bit-for-bit (first
+    whitespace token, rstrip('.'), case-insensitive letter match / float + MRA), so they are
+    comparable with the paper. Diagnostic `*_lenient` keys additionally fall back to the kit's
+    rule extractors (can_match_option / can_match_na) ONLY when the official parse fails (not a
+    letter / not a finite number), e.g. "(B)", "Answer: 3", "3m", "</think> about 2.5 meters";
+    where the official parse succeeds both are identical, so lenient - official = points lost to
+    answer format.
 """
 
 import ast
@@ -148,7 +149,7 @@ def _option_letters(options) -> str:
 _THOUSANDS_RE = re.compile(r'(?<=\d),(?=\d{3}(?!\d))')
 
 
-def robust_parse(question_type, prediction, options=None):
+def lenient_parse(question_type, prediction, options=None):
     """(parsed answer or None, mode) with mode in {'official', 'fallback', 'fail'}.
 
     The official token is used whenever it is a valid answer; only otherwise the kit's rule
@@ -181,8 +182,8 @@ def robust_parse(question_type, prediction, options=None):
     raise ValueError(f'Unknown ReVSI question type: {question_type}')
 
 
-def robust_score(question_type, prediction, ground_truth, options=None):
-    parsed, mode = robust_parse(question_type, prediction, options)
+def lenient_score(question_type, prediction, ground_truth, options=None):
+    parsed, mode = lenient_parse(question_type, prediction, options)
     if parsed is None:
         return 0.0, parsed, mode
     if question_type in MCQ_QUESTION_TYPES:
@@ -213,45 +214,45 @@ def score_dataframe(df: pd.DataFrame):
     gt_col = 'ground_truth' if 'ground_truth' in df.columns else 'answer'
     if 'options' not in df.columns:
         df['options'] = None
-    off, rob, parsed, modes = [], [], [], []
+    off, len_, parsed, modes = [], [], [], []
     for _, r in df.iterrows():
         pred = r['prediction']
         gt = r[gt_col]
         off.append(official_score(r['question_type'], pred, gt))
-        s, p, m = robust_score(r['question_type'], pred, gt, r['options'])
-        rob.append(s)
+        s, p, m = lenient_score(r['question_type'], pred, gt, r['options'])
+        len_.append(s)
         parsed.append(p)
         modes.append(m)
-    df['score_official'] = off
-    df['score'] = rob
-    df['pred_parsed'] = parsed
+    df['score'] = off                # headline: official parser
+    df['score_lenient'] = len_       # diagnostic: official parser + rule fallback
+    df['pred_parsed_lenient'] = parsed
     df['parse_mode'] = modes
 
-    tasks_rob = _aggregate(df, 'score')
-    tasks_off = _aggregate(df, 'score_official')
+    tasks_off = _aggregate(df, 'score')
+    tasks_len = _aggregate(df, 'score_lenient')
     summary = OrderedDict()
-    summary['Overall'] = 100.0 * float(np.mean(list(tasks_rob.values()))) if tasks_rob else 0.0
-    summary['Overall_official'] = 100.0 * float(np.mean(list(tasks_off.values()))) if tasks_off else 0.0
-    for task in tasks_rob:
-        summary[task] = 100.0 * tasks_rob[task]
+    summary['Overall'] = 100.0 * float(np.mean(list(tasks_off.values()))) if tasks_off else 0.0
+    summary['Overall_lenient'] = 100.0 * float(np.mean(list(tasks_len.values()))) if tasks_len else 0.0
     for task in tasks_off:
-        summary[f'{task}_official'] = 100.0 * tasks_off[task]
+        summary[task] = 100.0 * tasks_off[task]
+    for task in tasks_len:
+        summary[f'{task}_lenient'] = 100.0 * tasks_len[task]
 
     rows = []
     task_of = {q: t for t, qs in TASKS.items() for q in qs}
     df['task'] = df['question_type'].map(task_of)
-    for task in tasks_rob:
+    for task in tasks_off:
         sub = df[df['task'] == task]
         rows.append(dict(
             task=TASK_LABELS[task], key=task,
             metric='MRA' if TASKS[task][0] in NQ_QUESTION_TYPES else 'Acc',
-            n=len(sub), score=100.0 * tasks_rob[task], score_official=100.0 * tasks_off[task],
+            n=len(sub), score=100.0 * tasks_off[task], score_lenient=100.0 * tasks_len[task],
             n_fallback=int((sub['parse_mode'] == 'fallback').sum()),
             n_unparsed=int((sub['parse_mode'] == 'fail').sum()),
         ))
     rows.append(dict(
         task='Avg', key='overall', metric='mean of tasks', n=len(df),
-        score=summary['Overall'], score_official=summary['Overall_official'],
+        score=summary['Overall'], score_lenient=summary['Overall_lenient'],
         n_fallback=int((df['parse_mode'] == 'fallback').sum()),
         n_unparsed=int((df['parse_mode'] == 'fail').sum()),
     ))
@@ -490,7 +491,7 @@ class ReVSI(VideoBaseDataset):
         table_file = get_intermediate_file_path(eval_file, '_acc', 'csv')
         dump(scored, score_file)
         table.to_csv(table_file, index=False)
-        cols = ['task', 'metric', 'n', 'score', 'score_official', 'n_fallback', 'n_unparsed']
+        cols = ['task', 'metric', 'n', 'score', 'score_lenient', 'n_fallback', 'n_unparsed']
         print(f'[{self.dataset_name}] per-task table ({table_file}):\n'
               + table[cols].to_string(index=False, float_format=lambda x: f'{x:.2f}'))
         return summary
