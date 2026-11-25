@@ -1,0 +1,9 @@
+{
+  "_source": "HF USC-PSI-Lab/PhysBench @ 478fd93d + official labels USC-GVL/PhysBench @ a7eadc4d eval/physbench/val_answer.json; vlmeval class PhysBench. Val split only (200 items, split == val; labels equal to the test_answer.json rows). For quick checks / parameter choosing; the reported number is PhysBench (10,002).",
+  "_frames": "As PhysBench: 8 frames per video, pinned in the video message.",
+  "class": "PhysBench",
+  "nframe": 8,
+  "video_sampling": {
+    "nframes": 8
+  }
+}

@@ -59,6 +59,8 @@ python scripts/check_video_sampling.py                                 # prove f
 python scripts/check_revsi_frames.py                                   # ReVSI: official frames reach the request (needs data)
 python scripts/test_revsi_scoring.py                                   # ReVSI scorer tests (offline, needs parquet)
 python scripts/check_spacecast_parity.py                               # SpaceCast-Bench vs official evaluator (offline, ~6 min; needs the built cache)
+python scripts/test_physbench_scoring.py                               # PhysBench scorer vs official + lmms-eval (offline after first label fetch)
+python scripts/check_physbench.py                                      # PhysBench: order, 8 frames/video, token counts (needs data, ~7.4 GB zips)
 python scripts/run_suite.py --suite configs/suites/smoke.yaml --dry-run # print merged configs, no server
 python scripts/run_suite.py --suite configs/suites/smoke.yaml           # cosmos3_nano_nothink by default
 python scripts/run_suite.py --suite configs/suites/spatial.yaml --model cosmos3_nano_think
@@ -68,6 +70,10 @@ python scripts/run_suite.py --suite configs/suites/physics.yaml --model qwen3vl_
 SpaceCast-Bench runs in the official **cot** mode by default (`spatial/SpaceCastBench_CoT`, the
 official main experiment); the direct mode `spatial/SpaceCastBench` is a commented opt-in line in
 `spatial.yaml` (PROTOCOL.md §6, SpaceCast-Bench).
+
+PhysBench (`physics/PhysBench`, 10,002 interleaved image/video MCQ, official 8 frames per video and the
+official prefix-match scorer, comparable to the leaderboard) is in the physics suite; `physics/PhysBench_val`
+(200) is a commented quick-check line (PROTOCOL.md §6, PhysBench).
 
 Per bench, `run_suite.py` composes (same rule as `cosmos_eval/run_all.py`)
 

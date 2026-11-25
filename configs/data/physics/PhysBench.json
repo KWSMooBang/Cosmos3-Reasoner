@@ -1,0 +1,9 @@
+{
+  "_source": "HF USC-PSI-Lab/PhysBench @ 478fd93d (test.json, image.zip, video.zip; apache-2.0) + official labels USC-GVL/PhysBench @ a7eadc4d eval/physbench/test_answer.json; vlmeval class PhysBench (vlmeval/dataset/physbench.py). All 10,002 items (test 9,802 + val 200), as the paper / leaderboard / EvalAI report. Official scorer eval/print_test_score.py (verbatim in utils/physbench_official.py).",
+  "_frames": "Official test_frame=8 per video (eval/eval_utils/task_evaluator.py). build_prompt sends each mp4 at its <video> position as a video message that pins nframes=8 (qwen-vl-utils linspace over the whole clip), so model-level sampling keys are ignored for this bench (PROTOCOL.md §5). Images and the video are interleaved with the question text in the official order. scripts/check_physbench.py checks the frame count on the real files.",
+  "class": "PhysBench",
+  "nframe": 8,
+  "video_sampling": {
+    "nframes": 8
+  }
+}

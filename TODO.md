@@ -23,7 +23,6 @@ Stub modules ("dataset implementation not included in this public release"; list
 | NVIDIA's ERQA | `CosmosERQA` (`cosmos_erqa`) | stub; key `ERQA` served by `ERQABench` / `ERQADataset` (ERQABench used) |
 | Omni3D detection | `Omni3DDetectionDataset` (`Omni3D/omni3d_dataset`) | stub; `Omni3DBench` (VQA) is implemented and used |
 | CameraBench, CameraIntrinsic, AV 3D grounding, LocateAnything, ODinW13, … | see `--list-stubs` | not in scope; needs implementation if wanted |
-| **PhysBench** | — | **missing** entirely (no class, no key) |
 
 Implemented but not in a suite:
 - `Physics` (`Physics_yale`): evaluate() calls `os.path.basename(os.environ.get('LOCAL_LLM'))`

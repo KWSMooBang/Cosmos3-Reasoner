@@ -36,3 +36,11 @@ Then update this table.
    EvolvingLMMs-Lab/lmms-eval `lmms_eval/tasks/revsi/` @ `9134731f4f617e62ee80bcae9d0d5d9695ea55ef`,
    eamonn-zh/torchmetrics_ext `metrics/vqa/revsi.py` @ `3c18d782f51cbe31558ea7b53cbece5561b1721e`
    (referenced by 3dlg-hcvc/revsi @ `b26df855`). Data: HF `3dlg-hcvc/ReVSI` @ `345a811`. See PROTOCOL.md §6.1.
+4. `vlmeval/dataset/physbench.py` (new), `vlmeval/dataset/utils/physbench_official.py` (new, verbatim copy of
+   USC-GVL/PhysBench `eval/print_test_score.py` lines 1-78 @ `a7eadc4da554e20163303ec0c1e076a35a9f52e2`, Apache-2.0),
+   `vlmeval/dataset/__init__.py` (one import + `VIDEO_DATASET += [PhysBench]`): PhysBench dataset (keys `PhysBench`,
+   `PhysBench_val`). Prompt / 8-frame budget / interleaving from the official `eval/eval_utils/task_evaluator.py`
+   and `eval/models/qa_model/imageqa_model.py` (GPT-4o client) at the same commit; diagnostic scorer from
+   EvolvingLMMs-Lab/lmms-eval `lmms_eval/tasks/physbench/` @ `9134731f4f617e62ee80bcae9d0d5d9695ea55ef`.
+   Data: HF `USC-PSI-Lab/PhysBench` @ `478fd93d` (apache-2.0, not gated); labels: official repo
+   `eval/physbench/{test,val}_answer.json`. See PROTOCOL.md §6, PhysBench.
