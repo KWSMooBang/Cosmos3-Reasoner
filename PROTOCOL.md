@@ -681,6 +681,22 @@ mirror of the test repo (same files, older README) and is not used.
   or TP=1 with `--mm-processor-kwargs none --max-model-len 16384`. Test split (checkpoint budget): prompt tokens
   min 1,762 / p50 10,455 / p90 12,471 / max 14,234 (all ≤ 15,872), 207/568 videos (1,123/3,289 questions)
   downscaled. With `TP1_MM_CAPS`: max 7,335, 531/568 videos (3,100 questions) downscaled.
+- **Server cap for QuantiPhy runs (eval stage, t013 on GPU 1).** Serve with the video budget raised to the
+  checkpoint value: `--mm-processor-kwargs '{"images_kwargs": {"max_pixels": 8388608}, "videos_kwargs":
+  {"max_pixels": 25165824}}'` (the image cap is irrelevant here; QuantiPhy sends no images) with
+  `--max-model-len 16384`. If that does not start at TP=1 (vLLM profiles one max-size video item), use the
+  largest cap in this table that starts, and quote the downscaled counts next to the score. "Downscaled" means
+  the server shrinks frames below the 480p the client sends (all frames are still sent). Max video tokens
+  per item = cap / 2,048. Counts are from `quantiphy_token_budget.py --video-max-pixels <cap>`.
+
+  | `videos_kwargs.max_pixels` | max video tokens / item | val prompt tokens p50 / max | val downscaled (videos / questions of 158) | test downscaled (videos / questions of 3,289) | test prompt max |
+  |---|---|---|---|---|---|
+  | 25,165,824 (checkpoint, = TP≥2 default) | 12,288 | 11,520 / 12,925 | 10/24 / **69** | 207/568 / 1,123 | 14,234 |
+  | 20,971,520 | 10,240 | 10,030 / 11,561 | 11/24 / **80** | 240/568 / 1,303 | 11,561 |
+  | 16,777,216 | 8,192 | 8,054 / 8,779 | 18/24 / **123** | 455/568 / 2,703 | 9,746 |
+  | 12,582,912 (`TP1_MM_CAPS` default) | 6,144 | 6,131 / 6,718 | 21/24 / **145** | 531/568 / 3,100 | 7,335 |
+
+  Only the 25,165,824 row matches the checkpoint (reference) preprocessing; any lower cap is a deviation to report.
 - Scoring (no judge): official `parse_number` (exact `value unit` match, else text after the last delimiter
   `Final Answer:` / `Answer:` / `=>` / `=` / `:` / …, unit strings removed, last number, absolute value, NaN if
   none), then `evaluator.py`: per question MRA = mean over θ ∈ {0.1, …, 0.9, 0.95} of `|ŷ−y|/y < 1−θ`
