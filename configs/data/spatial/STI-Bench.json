@@ -1,0 +1,8 @@
+{
+  "_source": "EASI-Leaderboard-Data TSV (lmms-lab-si); vlmeval class STIBench. 30 frames = official STI-Bench paper setting (comment in vlmeval/dataset/video_dataset_config.py)",
+  "class": "STIBench",
+  "nframe": 30,
+  "video_sampling": {
+    "nframes": 30
+  }
+}

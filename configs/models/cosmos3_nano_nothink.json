@@ -1,0 +1,22 @@
+{
+  "_note": "REPRODUCTION DEFAULT. defaults copied from third_party/vlmevalkit-cosmos/cosmos_eval/models/cosmos.json. Thinking off, greedy (T=0).",
+  "_hf_model": "nvidia/Cosmos3-Nano",
+  "model_family": "cr",
+  "model_key": "cosmos3_nano_nothink",
+  "class": "CosmosReason2",
+  "defaults": {
+    "api_base": "${COSMOS_API_BASE}",
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "max_tokens": 8192,
+    "model": "${COSMOS_MODEL}",
+    "presence_penalty": null,
+    "retry": 10,
+    "seed": 1,
+    "temperature": 0,
+    "timeout": 600,
+    "verbose": false
+  },
+  "benchmarks": {}
+}

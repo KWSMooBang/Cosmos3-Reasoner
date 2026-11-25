@@ -1,0 +1,14 @@
+# Physics suite. Judges: PROTOCOL.md §6.
+name: physics
+model: cosmos3_nano_nothink
+concurrency: 2
+run:
+  api_nproc: 8
+  judge_nproc: 4
+benchmarks:
+  - key: physics/PhyX_mini_MC
+    judge_args: '{"valid_type": "STR"}'   # PhyX string-level (rule) matching, no LLM judge
+  - key: physics/PhyX_MC
+    judge_args: '{"valid_type": "STR"}'
+  - key: physics/SeePhys
+    judge: gpt-4o-mini-2024-07-18          # SeePhys requires an LLM judge (OPENAI_API_KEY); pinned snapshot

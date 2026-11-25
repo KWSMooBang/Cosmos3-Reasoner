@@ -1,0 +1,8 @@
+{
+  "_source": "EASI-Leaderboard-Data TSV (lmms-lab-si); vlmeval class SiteBenchVideo. 32 frames: kit variant SiteBenchVideo_32frame (no official setting annotated)",
+  "class": "SiteBenchVideo",
+  "nframe": 32,
+  "video_sampling": {
+    "nframes": 32
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "_source": "EASI-Leaderboard-Data TSV (lmms-lab-si); vlmeval class MMSIVideoBench. 64 frames: kit variant MMSIVideoBench_64frame; paper's Sufficient-Coverage policy is 300 frames (kit variant _300frame) - too long for the 24 GB-GPU serving budget, see TODO.md",
+  "class": "MMSIVideoBench",
+  "nframe": 64,
+  "video_sampling": {
+    "nframes": 64
+  }
+}

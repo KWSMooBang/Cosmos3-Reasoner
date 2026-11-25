@@ -1,0 +1,8 @@
+{
+  "_source": "EASI-Leaderboard-Data TSV (lmms-lab-si); vlmeval class DSRBench. 1 fps = official DSR-Bench paper setting (comment in video_dataset_config.py)",
+  "class": "DSRBench",
+  "fps": 1.0,
+  "video_sampling": {
+    "fps": 1.0
+  }
+}

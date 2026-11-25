@@ -1,0 +1,26 @@
+{
+  "_note": "Thinking off, official sampling + system prompt. sampling from NVIDIA/cosmos cookbooks/cosmos3/reasoner/reasoner_prompt_guide.md @1fe7e3be (also cosmos-framework prompt-guide.md).",
+  "_hf_model": "nvidia/Cosmos3-Nano",
+  "model_family": "cr",
+  "model_key": "cosmos3_nano_nothink_official",
+  "class": "CosmosReason2",
+  "defaults": {
+    "api_base": "${COSMOS_API_BASE}",
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "max_tokens": 8192,
+    "model": "${COSMOS_MODEL}",
+    "presence_penalty": 1.5,
+    "retry": 10,
+    "seed": 1,
+    "temperature": 0.7,
+    "timeout": 600,
+    "verbose": false,
+    "top_p": 0.8,
+    "top_k": 20,
+    "repetition_penalty": 1.0,
+    "system_prompt": "You are a helpful assistant."
+  },
+  "benchmarks": {}
+}

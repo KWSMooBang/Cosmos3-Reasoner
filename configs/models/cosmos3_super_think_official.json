@@ -1,0 +1,23 @@
+{
+  "_note": "Thinking on (official prompt), official thinking sampling. sampling from NVIDIA/cosmos cookbooks/cosmos3/reasoner/reasoner_prompt_guide.md @1fe7e3be (also cosmos-framework prompt-guide.md).",
+  "_hf_model": "nvidia/Cosmos3-Super",
+  "model_family": "cr",
+  "model_key": "cosmos3_super_think_official",
+  "class": "CosmosReason3Think",
+  "defaults": {
+    "api_base": "${COSMOS_API_BASE}",
+    "chat_template_kwargs": null,
+    "max_tokens": 16384,
+    "model": "${COSMOS_MODEL}",
+    "presence_penalty": 0.0,
+    "retry": 10,
+    "seed": 1,
+    "temperature": 0.6,
+    "timeout": 600,
+    "verbose": false,
+    "top_p": 0.95,
+    "top_k": 20,
+    "repetition_penalty": 1.0
+  },
+  "benchmarks": {}
+}

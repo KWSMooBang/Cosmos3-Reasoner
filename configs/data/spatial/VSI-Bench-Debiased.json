@@ -1,0 +1,9 @@
+{
+  "_source": "EASI-Leaderboard-Data TSV (lmms-lab-si); vlmeval class VsiBench; same frames as VSI-Bench",
+  "class": "VsiBench",
+  "nframe": 32,
+  "video_sampling": {
+    "nframes": 32
+  },
+  "sample_strategy": "uniform"
+}

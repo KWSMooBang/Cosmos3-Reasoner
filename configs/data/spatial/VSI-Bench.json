@@ -1,0 +1,9 @@
+{
+  "_source": "EASI-Leaderboard-Data TSV (lmms-lab-si); vlmeval class VsiBench. 32 frames uniform: task spec + VSI-Bench paper/lmms-eval linspace sampling; kit variant VSI-Bench_32frame",
+  "class": "VsiBench",
+  "nframe": 32,
+  "video_sampling": {
+    "nframes": 32
+  },
+  "sample_strategy": "uniform"
+}

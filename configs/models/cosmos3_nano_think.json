@@ -1,0 +1,20 @@
+{
+  "_note": "Thinking on with the OFFICIAL prompt format (CosmosReason3Think, local addition), greedy T=0 like the reproduction default; max_tokens raised to 16384 for the reasoning trace.",
+  "_hf_model": "nvidia/Cosmos3-Nano",
+  "model_family": "cr",
+  "model_key": "cosmos3_nano_think",
+  "class": "CosmosReason3Think",
+  "defaults": {
+    "api_base": "${COSMOS_API_BASE}",
+    "chat_template_kwargs": null,
+    "max_tokens": 16384,
+    "model": "${COSMOS_MODEL}",
+    "presence_penalty": null,
+    "retry": 10,
+    "seed": 1,
+    "temperature": 0,
+    "timeout": 600,
+    "verbose": false
+  },
+  "benchmarks": {}
+}
