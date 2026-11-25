@@ -22,6 +22,8 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 
 ## 결정
 - 2026-11-25: 코드 작업은 L2 로. push·원격 생성은 사람 승인 후.
+- 2026-11-25: 서빙은 docker 가 아니라 native vLLM(.venv-vllm)으로 한다 (이 세션이 이미 docker 안에서 돌기 때문). docker 스크립트는 참고용으로만 둔다.
+  NVIDIA 고정 이미지와 vLLM 버전이 다를 수 있으니 그 차이를 PROTOCOL.md 에 기록한다. 1차 평가 대상은 Cosmos3-Nano(TP=2).
 
 ## GPU 예산
 - 미정 (스모크 ≈ 2 GPU × 1h). 전체 벤치 실행 전 사람과 정한다.
