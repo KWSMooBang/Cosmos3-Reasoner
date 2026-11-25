@@ -18,6 +18,9 @@ Tests
   4. published numbers: our score_frame on the official gpt-5.1.csv == mra_results/all_model_results.csv.
   5. GT as prediction ("<gt> <unit>") -> 100; garbage (no number / random numbers) -> low.
   6. unit/number parse cases with expected official values; diagnostic lenient cases (exponent fix + unit conversion).
+  7. QuantiPhy_test submission ids: matched to the official template by question identity (exact / mutual-best
+     fuzzy), two swapped same-video questions keep their own ids, duplicates / missing ids / swapped ids in a
+     prediction table are refused at export, and the submission CSV is sorted by id with values aligned.
 
     python scripts/test_quantiphy_scoring.py
 """
@@ -275,33 +278,77 @@ def main() -> None:
         got = qp.lenient_value(text, q)
         check(abs(got - exp) < 1e-9, f'lenient {text!r} for "{q[-12:]}" -> {got} (expected {exp})')
 
-    # 7. test split vs the official submission template (ids 1..3289 = parquet row order)
+    # 7. test split: submission ids by question identity (official template), never by row order
     tsv = Path(os.environ['LMUData']) / 'QuantiPhy_test.tsv'
     if tsv.exists():
-        tpl = root / 'competition' / 'quantiphy_submission_template.csv'
-        if not tpl.exists():
-            tpl.parent.mkdir(parents=True, exist_ok=True)
-            with urllib.request.urlopen(qp.TEMPLATE_URL, timeout=60) as r:
-                tpl.write_bytes(r.read())
-        check(hashlib.sha256(tpl.read_bytes()).hexdigest() == qp.TEMPLATE_SHA256, 'submission template sha256 pinned')
-        t = pd.read_csv(tpl)
+        t = qp.load_template(root)  # downloads once, sha256-pinned (raises otherwise)
+        check(list(t.columns) == qp.SUBMISSION_COLUMNS, 'submission template columns, sha256 pinned')
+        pq = pd.read_parquet(root / 'test' / 'test_dataset.parquet')
+        ids, modes = qp.match_template_ids(pq, t)
+        n_exact = sum(m == 'exact' for m in modes)
+        tt = t.set_index('id')
+        same_stable = all(tt.loc[i, 'video_id'] == v and tt.loc[i, 'inference_type'] == it
+                          and str(tt.loc[i, 'ground_truth_prior']) == str(p)
+                          for i, v, it, p in zip(ids, pq['video_id'], pq['inference_type'], pq['prior']))
+        check(sorted(ids) == sorted(t['id']) and same_stable,
+              f'template ids by identity: {n_exact} exact + {len(ids) - n_exact} fuzzy (min ratio '
+              f'{min([float(m[6:]) for m in modes if m != "exact"] or [1]):.3f}); every id once; same video/type/prior')
         d = pd.read_csv(tsv, sep='\t')
-        check(list(t.columns) == qp.SUBMISSION_COLUMNS and list(t['id']) == list(d['index'])
-              and list(t['video_id']) == list(d['video_id'])
-              and list(t['inference_type']) == list(d['inference_type']),
-              f'QuantiPhy_test ids / video_id / inference_type == submission template ({len(t)} rows)')
+        check(list(d['index']) == list(ids), 'QuantiPhy_test.tsv index == identity-matched template ids')
+        # swap two questions of the same video and inference type: ids must follow the content
+        grp = pq.groupby(['video_id', 'inference_type']).filter(lambda g: g['question'].nunique() > 1)
+        a, b = grp.index[0], grp[(grp['video_id'] == grp.iloc[0]['video_id'])
+                                 & (grp['inference_type'] == grp.iloc[0]['inference_type'])
+                                 & (grp['question'] != grp.iloc[0]['question'])].index[0]
+        order = list(range(len(pq)))
+        order[a], order[b] = b, a
+        sw = pq.iloc[order].reset_index(drop=True)
+        ids_sw, _ = qp.match_template_ids(sw, t)
+        positional = list(range(1, len(pq) + 1))
+        check(ids_sw[a] == ids[b] and ids_sw[b] == ids[a] and ids_sw[a] != positional[a]
+              and sum(x != y for x, y in zip(ids_sw, positional)) == 2,
+              f'swapped rows {a}/{b} (same video {pq.loc[a, "video_id"]}, type {pq.loc[a, "inference_type"]}): ids follow '
+              f'the questions ({ids_sw[a]}, {ids_sw[b]}); row order would have given ({a + 1}, {b + 1})')
+        ids_tsh, _ = qp.match_template_ids(pq, t.sample(frac=1, random_state=0))
+        check(list(ids_tsh) == list(ids), 'template row order shuffled -> same ids')
+        for name, bad_df in (('duplicated question', pd.concat([pq, pq.iloc[[a]]], ignore_index=True)),):
+            try:
+                qp.match_template_ids(bad_df, t)
+                check(False, f'{name} -> ValueError')
+            except ValueError as e:
+                check(True, f'{name} -> ValueError ({str(e)[:70]})')
+        try:
+            qp.check_submission_ids(list(ids)[:-1], t['id'])
+            check(False, 'missing id -> ValueError')
+        except ValueError as e:
+            check(True, f'missing id at export -> ValueError ({str(e)[:70]})')
         dt = D.QuantiPhy('QuantiPhy_test')
         with tempfile.TemporaryDirectory() as td:
             ev = dt.data.copy()
-            ev['prediction'] = ['3.5 m/s'] * (len(ev) - 1) + ['no idea']
+            ev['prediction'] = [f'{int(i)} m' for i in ev['index']]  # parsed value == own id -> alignment check
+            ev.loc[ev.index[-1], 'prediction'] = 'no idea'
+            ev = ev.sample(frac=1, random_state=1)                   # prediction file row order is irrelevant
             ef = Path(td) / 'model_QuantiPhy_test.xlsx'
             ev.to_excel(ef, index=False)
             res = dt.evaluate(str(ef))
             sub = pd.read_csv(Path(td) / 'model_QuantiPhy_test_quantiphy_submission.csv')
-            check(list(sub.columns) == list(t.columns) and list(sub['id']) == list(t['id'])
-                  and sub['parsed_value'].iloc[:-1].eq(3.5).all() and pd.isna(sub['parsed_value'].iloc[-1])
+            okv = sub.dropna(subset=['parsed_value'])
+            check(list(sub.columns) == list(t.columns) and list(sub['id']) == sorted(t['id'])
+                  and (okv['parsed_value'] == okv['id']).all() and sub['parsed_value'].isna().sum() == 1
+                  and list(sub['video_id']) == list(t.sort_values('id')['video_id'])
                   and res['n'] == len(t) and 'Overall' not in res,
-                  f'QuantiPhy_test evaluate -> submission CSV with template columns/ids, no score ({dict(res)})')
+                  f'QuantiPhy_test evaluate -> submission sorted by id, values aligned to ids, no score ({dict(res)})')
+            ev2 = dt.data.copy()
+            ev2['prediction'] = '1 m'
+            ia, ib = ev2.index[a], ev2.index[b]
+            ev2.loc[ia, 'index'], ev2.loc[ib, 'index'] = ev2.loc[ib, 'index'], ev2.loc[ia, 'index']
+            ef2 = Path(td) / 'swapped_QuantiPhy_test.xlsx'
+            ev2.to_excel(ef2, index=False)
+            try:
+                dt.evaluate(str(ef2))
+                check(False, 'swapped ids in the prediction table -> export refused')
+            except ValueError as e:
+                check(True, f'swapped ids in the prediction table -> export refused ({str(e)[:80]})')
     else:
         print('[SKIP] QuantiPhy_test.tsv not built; template check skipped')
 

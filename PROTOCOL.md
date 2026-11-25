@@ -639,9 +639,17 @@ mirror of the test repo (same files, older README) and is not used.
   The 158-question validation split (≈4 % of the benchmark; the 2026-10-08 erratum removed 1 of 159) is the
   only split that can be scored locally. The test GT is withheld for good ("remains withheld so QuantiPhy can
   serve as a reliable long-term benchmark") and the NeurIPS 2026 challenge portal closed on 2026-10-25.
-  `QuantiPhy_test` writes `*_quantiphy_submission.csv` in the official template (`id` = parquet row order
-  1..3,289, checked against the template, sha256 `5f1e8367…`). The question text is the corrected 2026-10
-  wording; the template has older spellings in 60 rows (1.8 %).
+  `QuantiPhy_test` writes `*_quantiphy_submission.csv` in the official template (sha256 `5f1e8367…`, sorted by
+  `id`). Ids are matched by **question identity**, not row order (`match_template_ids`): exact match on
+  (video_id, video_source, inference_type, prior, fps, video_type, depth_info, question) for 3,190 rows. For the
+  99 rows the 2026-10 data fixes changed (question spelling 60, depth_info 36, video_type 5), the mutual-best
+  question-text match inside the same (video_id, video_source, inference_type, prior, fps) group is used
+  (difflib ratio ≥ 0.6 and ≥ 0.02 ahead of the runner-up both ways; observed min 0.909). Duplicate identities,
+  ambiguous or missing matches raise. At export the ids are re-derived from each prediction row's own content
+  and must equal the stored ids, and every template id must occur exactly once; otherwise no CSV is written.
+  Tested: two swapped questions of the same video and type keep their own ids, a swapped-id prediction table is
+  refused, and a shuffled template gives the same ids. Today the matched ids equal the parquet row order (3,289/3,289).
+  The prompt uses the corrected 2026-10 wording from the parquet.
 - Request (official zero-shot v3 = the paper's main setting): system prompt
   `You are an expert video analyst specializing in physics measurements. …` (verbatim, 5 lines), then one user
   turn `[video, text]`, text = `Given that {prior}.` + (3D only) `Additionally, you have the following information
