@@ -728,7 +728,29 @@ mirror of the test repo (same files, older README) and is not used.
     161-question 2D subset). Cosmos-Reason and GPT-4o were not evaluated.
 - Data on disk (`$LMUData/QuantiPhy/`): `validation/` 6 MB, `test/` 510 MB (original resolution), `test_480p/`
   157 MB, `official/aa8daa7…/` (test inputs), `competition/` (template). TSVs: `$LMUData/QuantiPhy.tsv` md5
-  `990b1834…`, `$LMUData/QuantiPhy_test.tsv` md5 `415d2695…` (column `n_frames` = decord frame count).
+  `3bf945b7…`, `$LMUData/QuantiPhy_test.tsv` md5 `7704a7b6…` (columns `n_frames` = decord frame count,
+  `id_match`), each with a `<key>.manifest.json`.
+- Cache integrity (every load, under a file lock; `scripts/test_quantiphy_media.py`). A cache is never
+  accepted just because the CSV / parquet / folder exists:
+  1. the question table is checked against a pinned sha256 (`validation_dataset.csv` `4f29907c…`,
+     `test_dataset.parquet` `0eb2db32…`);
+  2. every referenced clip is checked against its HF Git-LFS sha256 and size at the pinned revision. The
+     per-file list comes from the HF API once (`<split>/.quantiphy_hf_manifest.json`), and its digest is pinned in
+     the code (`53556d53…` val, `dc9d9adf…` test), so later loads need no network;
+  3. hashes are cached with size + mtime (`.quantiphy_verified.json`), so a normal load is a stat check (~0.03 s).
+     `QUANTIPHY_VERIFY_MEDIA=1` re-hashes everything. A missing, empty, truncated or changed file is
+     re-downloaded (`hf_hub_download`, `force_download`) and re-checked; a second failure raises;
+  4. `test_480p/` transcodes are recorded (`.quantiphy_480p_manifest.json`: source sha256, ffmpeg settings
+     version, own sha256, frame count, size, mtime). They are re-made when missing, changed, made from another
+     source, or (with `QUANTIPHY_VERIFY_MEDIA=1`) when the hash differs;
+  5. the TSV is reused only if its manifest matches (build version, TSV md5, digest of the verified
+     (clip, sha256, frame count) set) **and** its own `video` / `n_frames` columns agree with the verified media;
+     otherwise it is rebuilt.
+  Tested on a temporary copy: 3 clips missing with table + folder present, an empty clip, a truncated clip, a
+  same-size corruption that keeps the mtime (caught only with `QUANTIPHY_VERIFY_MEDIA=1`), an edited
+  question table, an edited TSV, a TSV with a stale `n_frames` column but a matching md5, a missing manifest,
+  and deleted / truncated / corrupted / wrong-source transcodes. All are repaired, and rebuilt TSVs are
+  byte-identical.
 
 ## 7. Reproducibility caveats
 
