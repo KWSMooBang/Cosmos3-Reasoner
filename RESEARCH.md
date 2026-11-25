@@ -12,7 +12,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 - python3 3.10 (uv 0.12.23 으로 3.11 venv 생성), HF 토큰 파일 있음
 - 모델 크기(HF API): Cosmos3-Nano 35.0GB (sha 45666784803b3a7ad577e0def405f9afcc3bddb2) → 4090 1장 불가, TP≥2
   Cosmos3-Super 132.7GB (sha 73d5746645961a0ec9607123a003bd9c1f8a0282) → 4090 8장 전부 필요. 받지 않음(사람 확인 전)
-- LMUData: /data0/Cosmos3-Reasoner/LMUData
+- LMUData: /data0/woosung/datasets/Cosmos3-Reasoner/LMUData
 
 ## 가설·백로그
 - [x] t001 vlmevalkit-cosmos subtree + 평가 클라이언트 venv + configs/scripts/docs 뼈대 (main cf328c1)
@@ -39,6 +39,8 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
   스모크는 CUDA_VISIBLE_DEVICES=1 로 직접 실행한다. t002 main 병합·push 03cdb9c.
 
 - 2026-11-25: think 평가는 GPU 0,1 (TP=2, 65536) 사용 (사람 지시). t003·t004·t005 main 병합·push 67817d2.
+
+- 2026-11-26: 데이터는 /data0 바로 아래가 아니라 /data0/woosung/datasets/Cosmos3-Reasoner/ 아래에 둔다 (사람 지시). LMUData·hd-epic 이동 완료.
 
 ## GPU 예산
 - 미정. 사용: t003 ≈1.0 GPU-h. t006 ≈3.0, t007 ≈2.9 GPU-h (누적 ≈6.9). 전체 벤치 실행 전 사람과 정한다.
