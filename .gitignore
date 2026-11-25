@@ -1,0 +1,21 @@
+# Python / venvs
+.venv/
+.venv-vllm/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# local secrets
+.env
+
+# run outputs: only results/summary.csv (and its README) is committed
+results/*
+!results/summary.csv
+!results/README.md
+
+# vendored-kit side effects when run from its own root
+third_party/vlmevalkit-cosmos/outputs/
+third_party/vlmevalkit-cosmos/cosmos_eval_out/
+
+# Claude Code worktrees
+.claude/
