@@ -53,5 +53,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
 
 - 2026-11-26: t006·t007·t009 main 병합 (사람 승인, 로컬). GPU 1 순차 평가 예산 4–10 GPU-h 승인.
 
+- 2026-11-26: Beyond3D 영상은 HF 미러 tt1225/HD-EPIC-Videos 에서 받고 공식 md5 로 검증 (사람 결정). 보정 데이터는 사람 업로드분 사용 (148/148).
+
 ## GPU 예산
 - 미정. 사용: t003 ≈1.0 GPU-h. t006 ≈3.0, t007 ≈2.9, t009 ≈1.2, t013 ≈2.8 GPU-h (누적 ≈10.9). 전체 벤치 실행 전 사람과 정한다.
