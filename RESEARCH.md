@@ -25,7 +25,7 @@ NVIDIA Cosmos 3 Reasoner(nvidia/Cosmos3-Nano, nvidia/Cosmos3-Super)를 3D spatia
       비디오를 query 시점까지 잘라 448x448 1fps + 타임스탬프 오버레이로 전처리. 공식 코드는 lmms-eval 포크
 - [x] t007 ReVSI_64frame 전체 평가 (Nano nothink): Overall 51.42 (Qwen3-VL-8B 49.1 / 32B 53.3)
 - [x] t009 SpaceCastBench_CoT 전체 평가 (Nano nothink): Overall 31.80 (Qwen3-VL-4B 34.0)
-- [ ] t008 Beyond3D: 포팅 완료(exp/beyond3d), codex High 3건 수정 대기·병합 보류. TP=2/65536 필요 (prompt p50 22.6k). 영상 출처·보정 결정 대기
+- [ ] t008 Beyond3D: 포팅 완료(exp/beyond3d), codex High 3건 수정 대기·병합 보류. → t014 (수정 + 보정 데이터 연결) 진행 중. 보정 데이터는 사람이 hd-epic/HD-EPIC_Intermediate_Data 로 업로드 중 (2026-11-26). TP=2/65536 필요 (prompt p50 22.6k). 영상 출처·보정 결정 대기
 - [x] t010 QuantiPhy 구현 (main c958dda): val 158문항만 채점 가능 (test GT 비공개), 공식 parser ^2 버그 유지 + lenient
 - [x] t011 PhysBench 구현 (main bc8c0b7): 10,002문항, TP=1 이미지 cap 6.9MP (359문항 영향), native TP=2 opt-in
 - [x] t012 VSTI-Bench 구현 + 3DSRBench_official (upstream 키는 헤드라인 0.00 버그) — main 병합
